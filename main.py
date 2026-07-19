@@ -4,35 +4,39 @@ import os
 
 # 1. Core calculation logic
 def calculate_housing_upfront(basic_salary: float, ndic: float, position: str) -> float:
-    if position == "s":
-        result_percentage = 45.0
-    else:
-        result_percentage = 40.0
-
+    result_percentage = 45.0 if position == "s" else 40.0
     ndic_calculation = (basic_salary / 100.0) * ndic
     annual_salary = (basic_salary + ndic_calculation) * 12.0
     final_result = (annual_salary / 100.0) * result_percentage
     return round(final_result, 0)
 
-# 2. Defining the User Interface (UI)
+# 2. User Interface Definition
 def main(page: ft.Page):
     page.title = "Housing Upfront Calculator"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.scroll = ft.ScrollMode.AUTO
     page.padding = 0  
 
+    # --- RESPONSIVE MOBILE CONFIGURATION ---
+    page.head = """
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    """
+    # ---------------------------------------
+
+    # --- HEADER SECTION ---
     logo = ft.Image(src="logo.png", width=100, height=100, fit="contain")
 
-    # 3D Outlined Title
-    title_text_bg = ft.Text("FMN Housing Upfront Calculator", size=24, weight=ft.FontWeight.BOLD, color="black", text_align=ft.TextAlign.CENTER)
-    title_text_fg = ft.Text("FMN Housing Upfront Calculator", size=24, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)
-    title_stack = ft.Stack(controls=[ft.Container(content=title_text_bg, left=2, top=2), title_text_fg], height=40)
+    title_text = ft.Text("FMN Housing Upfront Calculator", size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)
+    title_container = ft.Container(
+        content=title_text,
+        shadow=ft.BoxShadow(spread_radius=1, blur_radius=4, color="black", offset=ft.Offset(2, 2)),
+        padding=10
+    )
 
-    # UPDATED: Header spacing set to 20
     header_layout = ft.Column(
-        controls=[logo, title_stack],
+        controls=[logo, title_container],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        spacing=20
+        spacing=5
     )
 
     # Greeting Components
@@ -57,7 +61,7 @@ def main(page: ft.Page):
         name_popup_dialog.open = False
         page.update()
 
-    name_popup_dialog = ft.AlertDialog(modal=True, title=ft.Text("Personalize Your App"), content=ft.Column(controls=[ft.Text("Please enter your name:"), dialog_name_input], tight=True), actions=[ft.TextButton("Save Name", on_click=on_save_name_click)], actions_alignment=ft.MainAxisAlignment.END)
+    name_popup_dialog = ft.AlertDialog(modal=True, title=ft.Text("Personalize"), content=ft.Column(controls=[ft.Text("Please enter your name:"), dialog_name_input], tight=True), actions=[ft.TextButton("Save Name", on_click=on_save_name_click)], actions_alignment=ft.MainAxisAlignment.END)
     page.overlay.append(name_popup_dialog)
 
     def on_edit_name_click(e):
@@ -69,8 +73,7 @@ def main(page: ft.Page):
             ft.Container(content=ft.Text("Change Name", color="white", weight=ft.FontWeight.BOLD, size=14), alignment=ft.Alignment(0, 0), bgcolor="white", width=140, height=40, border_radius=8, left=2, top=2, shadow=ft.BoxShadow(spread_radius=1, blur_radius=12, color="#1A1A1A", offset=ft.Offset(0, 4))),
             ft.Container(content=ft.Text("Change Name", color="black", weight=ft.FontWeight.BOLD, size=14), alignment=ft.Alignment(0, 0), bgcolor="#FFD700", width=140, height=40, border_radius=8, on_click=on_edit_name_click)
         ],
-        width=146,
-        height=46
+        width=146, height=46
     )
 
     greeting_row = ft.Row(controls=[greeting_stack, change_name_btn_3d], alignment=ft.MainAxisAlignment.CENTER, spacing=15)
@@ -93,7 +96,7 @@ def main(page: ft.Page):
                 position_dropdown.value = data.get("saved_level", "j")
         except: pass
 
-    # UPDATED: Spanned text for Orange labels and Green currency
+    # Results Display
     result_display = ft.Text(spans=[ft.TextSpan("Your housing upfront is: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=20)
     basic_display = ft.Text(spans=[ft.TextSpan("New Basic Salary (Monthly): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=15)
     NDIC_display = ft.Text(spans=[ft.TextSpan("NDIC Increment (Monthly): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=15)
@@ -108,7 +111,6 @@ def main(page: ft.Page):
             ndic_increment = salary * (ndic / 100.0)
             my_new_basic_salary = salary + ndic_increment
             annual_salary = my_new_basic_salary * 12.0
-            
             result_display.spans[1].text = f"₦{final_amount:,.2f}"
             basic_display.spans[1].text = f"₦{my_new_basic_salary:,.2f}"
             NDIC_display.spans[1].text = f"₦{ndic_increment:,.2f}"
@@ -123,8 +125,7 @@ def main(page: ft.Page):
             ft.Container(content=ft.Text("Calculate Upfront", color="black", weight=ft.FontWeight.BOLD, size=15), alignment=ft.Alignment(0, 0), bgcolor="black", width=180, height=42, border_radius=8, left=2, top=2, shadow=ft.BoxShadow(spread_radius=1, blur_radius=14, color="#000000", offset=ft.Offset(0, 5))),
             ft.Container(content=ft.Text("Calculate Upfront", color="black", weight=ft.FontWeight.BOLD, size=15), alignment=ft.Alignment(0, 0), bgcolor="#FFD700", width=180, height=42, border_radius=8, on_click=on_calculate_click)
         ],
-        width=186,
-        height=48
+        width=186, height=48
     )
 
     form_border_side = ft.BorderSide(width=2, color="#D4D4CE")
@@ -136,8 +137,8 @@ def main(page: ft.Page):
     app_layout_content = ft.Column(
         controls=[
             header_layout, greeting_row, ft.Divider(color="white"),
-            ft.Card(content=form_fields_container, elevation=40),
-            ft.Container(padding=20, bgcolor="#FFFFFF", border_radius=12, width=360,
+            ft.Card(content=form_fields_container, elevation=20),
+            ft.Container(padding=20, bgcolor="#FFFFFF", border_radius=12, width=350,
                 border=ft.Border(top=form_border_side, bottom=form_border_side, left=form_border_side, right=form_border_side),
                 content=ft.Column([result_display, ft.Divider(height=5, color="#D4D4CE"), basic_display, NDIC_display, total_display], spacing=8)
             )
@@ -145,10 +146,10 @@ def main(page: ft.Page):
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
-    page.add(ft.Container(content=app_layout_content, gradient=ft.LinearGradient(rotation=1.57, colors=["#4B0082", "#E6E6FA"]), padding=20, width=page.width))
+    page.add(ft.Container(content=app_layout_content, gradient=ft.LinearGradient(rotation=1.57, colors=["#4B0082", "#E6E6FA"]), padding=20))
 
     if show_popup_automatically:
         name_popup_dialog.open = True
         page.update()
 
-ft.app(target=main, assets_dir="assets", view=ft.AppView.WEB_BROWSER)
+ft.app(target=main, assets_dir="assets")

@@ -1,3 +1,4 @@
 name: "FMN Housing Calculator"
 description: "A tool to calculate housing upfront for FMN staff."
 icon: "assets/icon.png"
+assets: assets
