@@ -24,7 +24,7 @@ def main(page: ft.Page):
     # ---------------------------------------
 
     # --- HEADER SECTION ---
-    logo = ft.Image(src="logo.png", width=100, height=100, fit="contain")
+    logo = ft.Image(src="assets/logo.png", width=100, height=100, fit="contain")
 
     title_text = ft.Text("FMN Housing Upfront Calculator", size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)
     title_container = ft.Container(
