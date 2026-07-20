@@ -71,8 +71,8 @@ def main(page: ft.Page):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=8
         ),
-        # Using pure integer values for safe padding (Left, Top, Right, Bottom)
-        padding=ft.Padding(0, 20, 0, 5),
+        # Pure number formats work universally across all Flet versions
+        padding=20, 
         width=350,
     )
 
@@ -195,8 +195,8 @@ def main(page: ft.Page):
         border_radius=15,
         bgcolor="#FFFFFF",
         width=350,
-        # Universal border setup bypassing direct BorderSide sub-calls
-        border=ft.border.all(2, "#FFD700"),
+        # Replaced the complex border utility with a core border constructor string
+        border=ft.Border(ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700")),
         shadow=ft.BoxShadow(blur_radius=5, color="#333333")
     )
 
@@ -221,3 +221,4 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.app(target=main)
+    
