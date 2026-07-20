@@ -8,7 +8,7 @@ def main(page: ft.Page):
     page.adaptive = True
     page.padding = 0 
 
-    # High-contrast color rule for clear visibility (Fixes faint text/labels)
+    # High-contrast color rule for clear visibility
     DARK_TEXT = "#222222"
 
     # --- 3. TERMS AND CONDITIONS LOGIC ---
@@ -71,8 +71,8 @@ def main(page: ft.Page):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=8
         ),
-        # Explicitly passing padding values via a safe string literal (left, top, right, bottom)
-        padding=ft.padding.only(left=0, top=20, right=0, bottom=5) if hasattr(ft, "padding") else "0,20,0,5",
+        # Using pure integer values for safe padding (Left, Top, Right, Bottom)
+        padding=ft.Padding(0, 20, 0, 5),
         width=350,
     )
 
@@ -117,7 +117,7 @@ def main(page: ft.Page):
         spacing=10
     )
 
-    # --- 2. CALCULATOR FORM (Fixing faint text/labels) ---
+    # --- 2. CALCULATOR FORM ---
     salary_input = ft.TextField(
         label="Basic Salary (₦)", 
         keyboard_type=ft.KeyboardType.NUMBER, 
@@ -127,7 +127,7 @@ def main(page: ft.Page):
         label_style=ft.TextStyle(color=DARK_TEXT)
     )
     ndic_input = ft.TextField(
-        label="NDIC Increment (%)", 
+        label="NDIC Addition (%)", 
         value="0", 
         keyboard_type=ft.KeyboardType.NUMBER, 
         bgcolor="#FFFFFF", 
@@ -148,7 +148,7 @@ def main(page: ft.Page):
         label_style=ft.TextStyle(color=DARK_TEXT)
     )
 
-    # --- 4. RESULTS DISPLAY (Cleaned & Updated to "NDIC Addition") ---
+    # --- 4. RESULTS DISPLAY ---
     result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
     result_basic = ft.Text(spans=[ft.TextSpan("Annual Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
     result_ndic = ft.Text(spans=[ft.TextSpan("NDIC Addition: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
@@ -195,7 +195,8 @@ def main(page: ft.Page):
         border_radius=15,
         bgcolor="#FFFFFF",
         width=350,
-        border=ft.Border(top=ft.BorderSide(2, "#FFD700"), bottom=ft.BorderSide(2, "#FFD700"), left=ft.BorderSide(2, "#FFD700"), right=ft.BorderSide(2, "#FFD700")),
+        # Universal border setup bypassing direct BorderSide sub-calls
+        border=ft.border.all(2, "#FFD700"),
         shadow=ft.BoxShadow(blur_radius=5, color="#333333")
     )
 
@@ -220,4 +221,3 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.app(target=main)
-    
