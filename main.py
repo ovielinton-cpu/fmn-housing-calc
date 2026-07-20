@@ -44,11 +44,6 @@ def main(page: ft.Page):
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    def show_terms_on_startup(page):
-        page.dialog = terms_dialog
-        terms_dialog.open = True
-        page.update()
-
     # --- 1. HEADER SETUP ---
     logo_image = ft.Image(
         src="assets/logo.png",  
@@ -207,7 +202,6 @@ def main(page: ft.Page):
 
     view_container = ft.Container(
         content=main_content,
-        # Safe string formats for gradient alignment parameters
         gradient=ft.LinearGradient(begin="top_center", end="bottom_center", colors=["#4B0082", "#E6E6FA"]),
         alignment="top_center",
         padding=10,
@@ -216,7 +210,11 @@ def main(page: ft.Page):
 
     page.add(view_container)
     
-    page.run_task(show_terms_on_startup, page)
+    # --- FIXED STARTUP DIALOG ---
+    # Bypassed page.run_task entirely to prevent the coroutine TypeErrors.
+    page.dialog = terms_dialog
+    terms_dialog.open = True
+    page.update()
 
 if __name__ == "__main__":
     ft.app(target=main)
