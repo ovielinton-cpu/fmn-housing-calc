@@ -1,155 +1,223 @@
 import flet as ft
-import json
 import os
+import json
 
-# 1. Core calculation logic
-def calculate_housing_upfront(basic_salary: float, ndic: float, position: str) -> float:
-    result_percentage = 45.0 if position == "s" else 40.0
-    ndic_calculation = (basic_salary / 100.0) * ndic
-    annual_salary = (basic_salary + ndic_calculation) * 12.0
-    final_result = (annual_salary / 100.0) * result_percentage
-    return round(final_result, 0)
-
-# 2. User Interface Definition
 def main(page: ft.Page):
-    page.title = "Housing Upfront Calculator"
+    page.title = "FMN Housing Upfront Calculator"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-    page.scroll = ft.ScrollMode.AUTO
-    page.padding = 0  
+    page.adaptive = True
+    page.padding = 0 
 
-    # --- RESPONSIVE MOBILE CONFIGURATION ---
-    page.head = """
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    """
-    # ---------------------------------------
+    # High-contrast color rule for clear visibility (Fixes faint text/labels)
+    DARK_TEXT = "#222222"
 
-    # --- HEADER SECTION ---
-    logo = ft.Image(src="assets/logo.png", width=100, height=100, fit="contain")
-
-    title_text = ft.Text("FMN Housing Upfront Calculator", size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)
-    title_container = ft.Container(
-        content=title_text,
-        shadow=ft.BoxShadow(spread_radius=1, blur_radius=4, color="black", offset=ft.Offset(2, 2)),
-        padding=10
-    )
-
-    header_layout = ft.Column(
-        controls=[logo, title_container],
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        spacing=5
-    )
-
-    # Greeting Components
-    greeting_bg = ft.Text(value="Welcome, Staff!", size=20, weight=ft.FontWeight.BOLD, color="black")
-    greeting_fg = ft.Text(value="Welcome, Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
-    greeting_stack = ft.Stack(controls=[ft.Container(content=greeting_bg, left=2, top=2), greeting_fg], height=35)
-
-    dialog_name_input = ft.TextField(label="Enter your name", autofocus=True)
-    salary_input = ft.TextField(label="Basic Salary (₦)", keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FAFAFA", color="black", border_color="#4B0082", border_width=2, focused_border_color="#FFD700")
-    ndic_input = ft.TextField(label="NDIC Increment (%)", keyboard_type=ft.KeyboardType.NUMBER, value="0", bgcolor="#FAFAFA", color="black", border_color="#4B0082", border_width=2, focused_border_color="#FFD700")
-    position_dropdown = ft.Dropdown(label="Staff Level", options=[ft.dropdown.Option("j", "Junior Staff (40%)"), ft.dropdown.Option("s", "Senior Staff (45%)")], value="j", bgcolor="#FAFAFA", color="black", border_color="#4B0082", border_width=2)
-
-    def save_app_data():
-        data_to_save = {"saved_name": dialog_name_input.value, "saved_salary": salary_input.value, "saved_ndic": ndic_input.value, "saved_level": position_dropdown.value}
-        with open("saved_data.json", "w") as f: json.dump(data_to_save, f)
-
-    def on_save_name_click(e):
-        greeting_text = f"Welcome back, {dialog_name_input.value}! 👋" if dialog_name_input.value.strip() else "Welcome, Staff!"
-        greeting_bg.value = greeting_text
-        greeting_fg.value = greeting_text
-        save_app_data()
-        name_popup_dialog.open = False
+    # --- 3. TERMS AND CONDITIONS LOGIC ---
+    def close_terms(e):
+        terms_dialog.open = False
         page.update()
 
-    name_popup_dialog = ft.AlertDialog(modal=True, title=ft.Text("Personalize"), content=ft.Column(controls=[ft.Text("Please enter your name:"), dialog_name_input], tight=True), actions=[ft.TextButton("Save Name", on_click=on_save_name_click)], actions_alignment=ft.MainAxisAlignment.END)
-    page.overlay.append(name_popup_dialog)
-
-    def on_edit_name_click(e):
-        name_popup_dialog.open = True
-        page.update()
-
-    change_name_btn_3d = ft.Stack(
-        controls=[
-            ft.Container(content=ft.Text("Change Name", color="white", weight=ft.FontWeight.BOLD, size=14), alignment=ft.Alignment(0, 0), bgcolor="white", width=140, height=40, border_radius=8, left=2, top=2, shadow=ft.BoxShadow(spread_radius=1, blur_radius=12, color="#1A1A1A", offset=ft.Offset(0, 4))),
-            ft.Container(content=ft.Text("Change Name", color="black", weight=ft.FontWeight.BOLD, size=14), alignment=ft.Alignment(0, 0), bgcolor="#FFD700", width=140, height=40, border_radius=8, on_click=on_edit_name_click)
+    terms_content = ft.Column(
+        [
+            ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=DARK_TEXT),
+            ft.Text(
+                "1. Purpose: This application is provided as a tool to assist FMN staff in estimating their Housing Upfront payments.\n\n"
+                "2. Accuracy: All calculations are estimates based on the information provided. These figures should be verified against official FMN payroll policies.\n\n"
+                "3. Disclaimer: The developer is not responsible for any financial decisions made based on these calculations. Please consult with your HR department for official confirmation.\n\n"
+                "4. Privacy: No personal data or salary information is stored, transmitted, or shared externally by this application.",
+                color=DARK_TEXT,
+                size=14
+            ),
         ],
-        width=146, height=46
+        scroll=ft.ScrollMode.AUTO, # Requires scrolling down
+        height=300,
+        spacing=10
     )
 
-    greeting_row = ft.Row(controls=[greeting_stack, change_name_btn_3d], alignment=ft.MainAxisAlignment.CENTER, spacing=15)
+    terms_dialog = ft.AlertDialog(
+        modal=True, # Forces the user to interact
+        title=ft.Text("Welcome & Agreement", weight=ft.FontWeight.BOLD),
+        content=ft.Container(content=terms_content, width=320, height=350),
+        actions=[
+            ft.TextButton("I Agree", on_click=close_terms, style=ft.ButtonStyle(color="#4B0082")),
+            ft.TextButton("I Don't Agree", on_click=lambda e: page.window_close(), style=ft.ButtonStyle(color="red")),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
 
-    # Load Saved Data
-    show_popup_automatically = True
-    if os.path.exists("saved_data.json"):
-        try:
-            with open("saved_data.json", "r") as f:
-                data = json.load(f)
-                saved_name = data.get("saved_name", "")
-                dialog_name_input.value = saved_name
-                if saved_name:
-                    greeting_text = f"Welcome back, {saved_name}! 👋"
-                    greeting_bg.value = greeting_text
-                    greeting_fg.value = greeting_text
-                    show_popup_automatically = False
-                salary_input.value = data.get("saved_salary", "")
-                ndic_input.value = data.get("saved_ndic", "0")
-                position_dropdown.value = data.get("saved_level", "j")
-        except: pass
+    def show_terms_on_startup(page):
+        page.dialog = terms_dialog
+        terms_dialog.open = True
+        page.update()
 
-    # Results Display
-    result_display = ft.Text(spans=[ft.TextSpan("Your housing upfront is: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=20)
-    basic_display = ft.Text(spans=[ft.TextSpan("New Basic Salary (Monthly): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=15)
-    NDIC_display = ft.Text(spans=[ft.TextSpan("NDIC Increment (Monthly): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=15)
-    total_display = ft.Text(spans=[ft.TextSpan("Total Annual Salary: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=15)
+    # --- 1. HEADER SETUP (Fixing the Logo path) ---
+    logo_image = ft.Image(
+        src="assets/logo.png",  # Correctly pointing to your assets directory
+        width=90, 
+        height=90, 
+        fit=ft.ImageFit.CONTAIN
+    )
+    
+    header_text = ft.Text(
+        "FMN Housing Upfront Calculator",
+        size=22,
+        weight=ft.FontWeight.BOLD,
+        color="white",
+        text_align=ft.TextAlign.CENTER
+    )
+    
+    header_container = ft.Container(
+        content=ft.Column(
+            controls=[logo_image, header_text],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=8
+        ),
+        padding=ft.padding.only(top=20, bottom=5),
+        width=350,
+    )
+
+    # --- GREETING SECTION ---
+    greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
+    
+    def on_change_click(e):
+        def save_name(e):
+            new_name = name_field.value
+            greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
+            data = {"user_name": new_name}
+            with open("user_prefs.json", "w") as f:
+                json.dump(data, f)
+            dialog.open = False
+            page.update()
+
+        name_field = ft.TextField(label="Your Name", value=greeting_name.value.split("!")[0] if "👋" in greeting_name.value else "", autofocus=True)
+        dialog = ft.AlertDialog(
+            title=ft.Text("Update Name"),
+            content=name_field,
+            actions=[ft.TextButton("Save", on_click=save_name)],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.dialog = dialog
+        dialog.open = True
+        page.update()
+
+    try:
+        if os.path.exists("user_prefs.json"):
+            with open("user_prefs.json", "r") as f:
+                loaded_data = json.load(f)
+                if loaded_data.get("user_name"):
+                    greeting_name.value = f"{loaded_data['user_name']}! 👋"
+    except:
+        pass
+
+    change_btn = ft.ElevatedButton("Change", on_click=on_change_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
+
+    greeting_row = ft.Row(
+        controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=10
+    )
+
+    # --- 2. CALCULATOR FORM (Fixing faint text/labels) ---
+    salary_input = ft.TextField(
+        label="Basic Salary (₦)", 
+        keyboard_type=ft.KeyboardType.NUMBER, 
+        bgcolor="#FFFFFF", 
+        border_color="#4B0082",
+        color=DARK_TEXT,
+        label_style=ft.TextStyle(color=DARK_TEXT)
+    )
+    ndic_input = ft.TextField(
+        label="NDIC Increment (%)", 
+        value="0", 
+        keyboard_type=ft.KeyboardType.NUMBER, 
+        bgcolor="#FFFFFF", 
+        border_color="#4B0082",
+        color=DARK_TEXT,
+        label_style=ft.TextStyle(color=DARK_TEXT)
+    )
+    level_dropdown = ft.Dropdown(
+        label="Staff Level",
+        options=[
+            ft.dropdown.Option("junior", "Junior Staff (40%)"),
+            ft.dropdown.Option("senior", "Senior Staff (45%)")
+        ],
+        value="junior",
+        bgcolor="#FFFFFF",
+        border_color="#4B0082",
+        color=DARK_TEXT,
+        label_style=ft.TextStyle(color=DARK_TEXT)
+    )
+
+    # --- 4. RESULTS DISPLAY (Cleaned & Updated to "NDIC Addition") ---
+    result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
+    result_basic = ft.Text(spans=[ft.TextSpan("Annual Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+    result_ndic = ft.Text(spans=[ft.TextSpan("NDIC Addition: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+    result_total = ft.Text(spans=[ft.TextSpan("Total Gross: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
 
     def on_calculate_click(e):
         try:
-            salary = float(salary_input.value) if salary_input.value else 0.0
-            ndic = float(ndic_input.value) if ndic_input.value else 0.0
-            pos = position_dropdown.value
-            final_amount = calculate_housing_upfront(salary, ndic, pos)
-            ndic_increment = salary * (ndic / 100.0)
-            my_new_basic_salary = salary + ndic_increment
-            annual_salary = my_new_basic_salary * 12.0
-            result_display.spans[1].text = f"₦{final_amount:,.2f}"
-            basic_display.spans[1].text = f"₦{my_new_basic_salary:,.2f}"
-            NDIC_display.spans[1].text = f"₦{ndic_increment:,.2f}"
-            total_display.spans[1].text = f"₦{annual_salary:,.2f}"
+            salary = float(salary_input.value)
+            ndic_pct = float(ndic_input.value)
+            level = level_dropdown.value
+            
+            rate = 0.40 if level == "junior" else 0.45
+            
+            annual_basic = salary * 12.0
+            ndic_amount = annual_basic * (ndic_pct / 100.0)
+            annual_total = annual_basic + ndic_amount
+            upfront_amount = annual_total * rate
+            
+            result_upfront.spans[1].text = f"₦{upfront_amount:,.2f}"
+            result_basic.spans[1].text = f"₦{annual_basic:,.2f}"
+            result_ndic.spans[1].text = f"₦{ndic_amount:,.2f}"
+            result_total.spans[1].text = f"₦{annual_total:,.2f}"
+            
+            page.update()
         except ValueError:
-            result_display.spans[1].text = "Invalid"
-        save_app_data()
-        page.update()
+            result_upfront.spans[1].text = "Invalid Input"
+            page.update()
 
-    calc_button_3d = ft.Stack(
-        controls=[
-            ft.Container(content=ft.Text("Calculate Upfront", color="black", weight=ft.FontWeight.BOLD, size=15), alignment=ft.Alignment(0, 0), bgcolor="black", width=180, height=42, border_radius=8, left=2, top=2, shadow=ft.BoxShadow(spread_radius=1, blur_radius=14, color="#000000", offset=ft.Offset(0, 5))),
-            ft.Container(content=ft.Text("Calculate Upfront", color="black", weight=ft.FontWeight.BOLD, size=15), alignment=ft.Alignment(0, 0), bgcolor="#FFD700", width=180, height=42, border_radius=8, on_click=on_calculate_click)
-        ],
-        width=186, height=48
+    calc_btn = ft.ElevatedButton("Calculate Upfront", on_click=on_calculate_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082", text_style=ft.TextStyle(weight=ft.FontWeight.BOLD)))
+
+    form_container = ft.Container(
+        content=ft.Column(controls=[salary_input, ndic_input, level_dropdown, calc_btn], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15, tight=True),
+        padding=20,
+        border_radius=15,
+        bgcolor="#F5F5F0",
+        width=350,
+        shadow=ft.BoxShadow(blur_radius=10, color="#333333")
+    )
+    form_card = ft.Card(content=form_container, elevation=5)
+
+    results_container = ft.Container(
+        content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_ndic, result_total], spacing=8, tight=True),
+        padding=15,
+        border_radius=15,
+        bgcolor="#FFFFFF",
+        width=350,
+        border=ft.Border(top=ft.BorderSide(2, "#FFD700"), bottom=ft.BorderSide(2, "#FFD700"), left=ft.BorderSide(2, "#FFD700"), right=ft.BorderSide(2, "#FFD700")),
+        shadow=ft.BoxShadow(blur_radius=5, color="#333333")
     )
 
-    form_border_side = ft.BorderSide(width=2, color="#D4D4CE")
-    form_fields_container = ft.Container(
-        content=ft.Column(controls=[salary_input, ndic_input, position_dropdown, ft.Divider(height=15, color="transparent"), calc_button_3d], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15),
-        padding=25, bgcolor="#F5F5F0", border_radius=15, border=ft.Border(top=form_border_side, bottom=form_border_side, left=form_border_side, right=form_border_side)
-    )
-
-    app_layout_content = ft.Column(
-        controls=[
-            header_layout, greeting_row, ft.Divider(color="white"),
-            ft.Card(content=form_fields_container, elevation=20),
-            ft.Container(padding=20, bgcolor="#FFFFFF", border_radius=12, width=350,
-                border=ft.Border(top=form_border_side, bottom=form_border_side, left=form_border_side, right=form_border_side),
-                content=ft.Column([result_display, ft.Divider(height=5, color="#D4D4CE"), basic_display, NDIC_display, total_display], spacing=8)
-            )
-        ],
+    main_content = ft.Column(
+        controls=[header_container, greeting_row, form_card, ft.Container(height=10), results_container],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        spacing=5,
+        expand=True
     )
 
-    page.add(ft.Container(content=app_layout_content, gradient=ft.LinearGradient(rotation=1.57, colors=["#4B0082", "#E6E6FA"]), padding=20))
+    view_container = ft.Container(
+        content=main_content,
+        gradient=ft.LinearGradient(begin=ft.alignment.top_center, end=ft.alignment.bottom_center, colors=["#4B0082", "#E6E6FA"]),
+        alignment=ft.alignment.top_center,
+        padding=10,
+        expand=True
+    )
 
-    if show_popup_automatically:
-        name_popup_dialog.open = True
-        page.update()
+    page.add(view_container)
+    
+    # Fire up the Terms pop-up task immediately upon app opening
+    page.run_task(show_terms_on_startup, page)
 
-ft.app(target=main, assets_dir="assets")
+if __name__ == "__main__":
+    ft.app(target=main)
+    
