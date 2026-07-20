@@ -49,12 +49,12 @@ def main(page: ft.Page):
         terms_dialog.open = True
         page.update()
 
-    # --- 1. HEADER SETUP (Fixing the Logo path) ---
+    # --- 1. HEADER SETUP (Version-safe fix applied here) ---
     logo_image = ft.Image(
         src="assets/logo.png",  # Correctly pointing to your assets directory
         width=90, 
         height=90, 
-        fit=ft.ImageFit.CONTAIN
+        fit="contain"           # Fixes the 'ImageFit' AttributeError version crash
     )
     
     header_text = ft.Text(
