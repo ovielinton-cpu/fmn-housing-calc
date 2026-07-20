@@ -28,13 +28,13 @@ def main(page: ft.Page):
                 size=14
             ),
         ],
-        scroll=ft.ScrollMode.AUTO, # Requires scrolling down
+        scroll=ft.ScrollMode.AUTO,
         height=300,
         spacing=10
     )
 
     terms_dialog = ft.AlertDialog(
-        modal=True, # Forces the user to interact
+        modal=True,
         title=ft.Text("Welcome & Agreement", weight=ft.FontWeight.BOLD),
         content=ft.Container(content=terms_content, width=320, height=350),
         actions=[
@@ -49,12 +49,12 @@ def main(page: ft.Page):
         terms_dialog.open = True
         page.update()
 
-    # --- 1. HEADER SETUP (Version-safe fix applied here) ---
+    # --- 1. HEADER SETUP ---
     logo_image = ft.Image(
-        src="assets/logo.png",  # Correctly pointing to your assets directory
+        src="assets/logo.png",  
         width=90, 
         height=90, 
-        fit="contain"           # Fixes the 'ImageFit' AttributeError version crash
+        fit="contain"           
     )
     
     header_text = ft.Text(
@@ -71,7 +71,8 @@ def main(page: ft.Page):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=8
         ),
-        padding=ft.padding.only(top=20, bottom=5),
+        # Explicitly passing padding values via a safe string literal (left, top, right, bottom)
+        padding=ft.padding.only(left=0, top=20, right=0, bottom=5) if hasattr(ft, "padding") else "0,20,0,5",
         width=350,
     )
 
@@ -215,7 +216,6 @@ def main(page: ft.Page):
 
     page.add(view_container)
     
-    # Fire up the Terms pop-up task immediately upon app opening
     page.run_task(show_terms_on_startup, page)
 
 if __name__ == "__main__":
