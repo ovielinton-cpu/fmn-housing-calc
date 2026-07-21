@@ -68,7 +68,6 @@ def main(page: ft.Page):
     def close_terms(e):
         page.client_storage.set("terms_accepted", True)
         page.close(terms_dialog)
-        # After agreeing, if no name saved yet, ask for it once.
         if not page.client_storage.get("user_name"):
             open_name_dialog()
 
@@ -127,7 +126,6 @@ def main(page: ft.Page):
         width=None,
     )
 
-    # Load saved name on startup, if any
     try:
         saved_name = page.client_storage.get("user_name")
         if saved_name:
@@ -161,8 +159,14 @@ def main(page: ft.Page):
     level_dropdown = ft.Dropdown(
         label="Staff Level",
         options=[
-            ft.dropdown.Option("junior", "Junior Staff (40%)"),
-            ft.dropdown.Option("senior", "Senior Staff (45%)")
+            ft.dropdown.Option(
+                key="junior",
+                content=ft.Text("Junior Staff (40%)", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=15)
+            ),
+            ft.dropdown.Option(
+                key="senior",
+                content=ft.Text("Senior Staff (45%)", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=15)
+            ),
         ],
         value="junior",
         bgcolor="#FFFFFF",
@@ -248,9 +252,6 @@ def main(page: ft.Page):
 
     page.add(view_container)
 
-    # --- STARTUP FLOW ---
-    # Show terms only the very first time the app is ever opened.
-    # After that, if no name is saved yet, prompt for it once.
     try:
         terms_already_accepted = page.client_storage.get("terms_accepted")
     except Exception:
