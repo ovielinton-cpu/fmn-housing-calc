@@ -13,8 +13,7 @@ def main(page: ft.Page):
 
     # --- 3. TERMS AND CONDITIONS DIALOG ---
     def close_terms(e):
-        terms_dialog.open = False
-        page.update()
+        page.close(terms_dialog)
 
     terms_content = ft.Column(
         [
@@ -39,7 +38,7 @@ def main(page: ft.Page):
         content=ft.Container(content=terms_content, width=320, height=350),
         actions=[
             ft.TextButton("I Agree", on_click=close_terms, style=ft.ButtonStyle(color=PURPLE_TEXT)),
-            ft.TextButton("I Don't Agree", on_click=lambda e: page.window_close(), style=ft.ButtonStyle(color="red")),
+            ft.TextButton("I Don't Agree", on_click=lambda e: page.window.close(), style=ft.ButtonStyle(color="red")),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
@@ -83,8 +82,7 @@ def main(page: ft.Page):
             # FIX 3: client_storage works reliably across web/desktop/mobile builds,
             # unlike writing a json file to the working directory (often blocked/sandboxed on device).
             page.client_storage.set("user_name", new_name)
-            dialog.open = False
-            page.update()
+            page.close(dialog)
 
         name_field = ft.TextField(
             label="Your Name",
@@ -99,9 +97,7 @@ def main(page: ft.Page):
             actions=[ft.TextButton("Save", on_click=save_name)],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        page.dialog = dialog
-        dialog.open = True
-        page.update()
+        page.open(dialog)
 
     try:
         saved_name = page.client_storage.get("user_name")
@@ -215,7 +211,7 @@ def main(page: ft.Page):
             spacing=5,
         ),
         width=400,
-        alignment=ft.alignment.top_center,
+        alignment=ft.Alignment(0, -1),
     )
 
     main_content = ft.Column(
@@ -227,17 +223,14 @@ def main(page: ft.Page):
 
     view_container = ft.Container(
         content=main_content,
-        gradient=ft.LinearGradient(begin="top_center", end="bottom_center", colors=["#4B0082", "#E6E6FA"]),
-        alignment="top_center",
+        gradient=ft.LinearGradient(begin=ft.Alignment(0, -1), end=ft.Alignment(0, 1), colors=["#4B0082", "#E6E6FA"]),
+        alignment=ft.Alignment(0, -1),
         padding=10,
         expand=True
     )
 
     page.add(view_container)
-
-    page.dialog = terms_dialog
-    terms_dialog.open = True
-    page.update()
+    page.open(terms_dialog)
 
 if __name__ == "__main__":
     ft.app(target=main, view=ft.AppView.WEB_BROWSER)
