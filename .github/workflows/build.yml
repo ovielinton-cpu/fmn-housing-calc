@@ -20,7 +20,7 @@ jobs:
         run: pip install flet==0.28.3
 
       - name: Build APK
-        run: flet build apk --yes
+        run: flet build apk
         env:
           FLET_CLI_NO_RICH_OUTPUT: 1
 
