@@ -178,9 +178,9 @@ def main(page: ft.Page):
 
     # --- RESULTS DISPLAY ---
     result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
-    result_basic = ft.Text(spans=[ft.TextSpan("Annual Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+    result_basic = ft.Text(spans=[ft.TextSpan("New Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
     result_ndic = ft.Text(spans=[ft.TextSpan("NDIC Addition: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-    result_total = ft.Text(spans=[ft.TextSpan("Total Gross: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+    result_total = ft.Text(spans=[ft.TextSpan("Annual Salary: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
 
     def on_calculate_click(e):
         try:
@@ -190,15 +190,19 @@ def main(page: ft.Page):
 
             rate = 0.40 if level == "junior" else 0.45
 
-            annual_basic = salary * 12.0
-            ndic_amount = annual_basic * (ndic_pct / 100.0)
-            annual_total = annual_basic + ndic_amount
-            upfront_amount = annual_total * rate
+            # NDIC Addition = percentage of the monthly Basic Salary
+            ndic_amount = salary * (ndic_pct / 100.0)
+            # New Basic = Basic Salary + NDIC Addition (still a monthly figure)
+            new_basic = salary + ndic_amount
+            # Annual Salary = New Basic x 12
+            annual_salary = new_basic * 12.0
+            # Upfront = percentage (junior/senior rate) of the Annual Salary
+            upfront_amount = annual_salary * rate
 
             result_upfront.spans[1].text = f"₦{upfront_amount:,.2f}"
-            result_basic.spans[1].text = f"₦{annual_basic:,.2f}"
+            result_basic.spans[1].text = f"₦{new_basic:,.2f}"
             result_ndic.spans[1].text = f"₦{ndic_amount:,.2f}"
-            result_total.spans[1].text = f"₦{annual_total:,.2f}"
+            result_total.spans[1].text = f"₦{annual_salary:,.2f}"
 
             page.update()
         except ValueError:
