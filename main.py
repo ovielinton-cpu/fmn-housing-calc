@@ -44,8 +44,6 @@ def main(page: ft.Page):
     )
 
     # --- 1. HEADER SETUP ---
-    # FIX 1: path is relative to the assets_dir root, so no "assets/" prefix.
-    # Make sure the file physically lives at: <project_root>/assets/logo.png
     logo_image = ft.Image(
         src="logo.png",
         width=90,
@@ -68,7 +66,6 @@ def main(page: ft.Page):
             spacing=8
         ),
         padding=20,
-        # FIX 2: no fixed width — sizes to its content/parent instead
         width=None,
     )
 
@@ -79,8 +76,6 @@ def main(page: ft.Page):
         def save_name(e):
             new_name = name_field.value
             greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
-            # FIX 3: client_storage works reliably across web/desktop/mobile builds,
-            # unlike writing a json file to the working directory (often blocked/sandboxed on device).
             page.client_storage.set("user_name", new_name)
             page.close(dialog)
 
@@ -183,7 +178,6 @@ def main(page: ft.Page):
 
     calc_btn = ft.ElevatedButton("Calculate Upfront", on_click=on_calculate_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082", text_style=ft.TextStyle(weight=ft.FontWeight.BOLD)))
 
-    # FIX 2 (cont.): replaced fixed width=350 with max_width via a responsive container below.
     form_container = ft.Container(
         content=ft.Column(controls=[salary_input, ndic_input, level_dropdown, calc_btn], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15, tight=True),
         padding=20,
@@ -202,8 +196,6 @@ def main(page: ft.Page):
         shadow=ft.BoxShadow(blur_radius=5, color="#333333")
     )
 
-    # FIX 2 (cont.): a single responsive wrapper caps content width on large screens
-    # (tablets/web) but lets it fill narrower phone screens instead of clipping/overflowing.
     content_wrapper = ft.Container(
         content=ft.Column(
             controls=[header_container, greeting_row, form_card, ft.Container(height=10), results_container],
@@ -234,4 +226,3 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.app(target=main, view=ft.AppView.WEB_BROWSER)
-    
