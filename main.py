@@ -11,7 +11,7 @@ def main(page: ft.Page):
     DARK_TEXT = "#222222"
     PURPLE_TEXT = "#4B0082"
 
-    # --- NAME DIALOG (used both for first-time setup and "Change" button) ---
+    # --- NAME DIALOG (used both for first-time setup and "Change Name" button) ---
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
 
     def open_name_dialog(e=None):
@@ -55,7 +55,7 @@ def main(page: ft.Page):
         )
         page.open(name_dialog)
 
-    change_btn = ft.ElevatedButton("Change", on_click=open_name_dialog, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
+    change_btn = ft.ElevatedButton("Change Name", on_click=open_name_dialog, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
 
     greeting_row = ft.Row(
         controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
@@ -133,27 +133,45 @@ def main(page: ft.Page):
     except Exception:
         pass
 
+    try:
+        last_salary = page.client_storage.get("last_salary")
+    except Exception:
+        last_salary = None
+    try:
+        last_ndic = page.client_storage.get("last_ndic")
+    except Exception:
+        last_ndic = None
+
+    def save_salary(e):
+        page.client_storage.set("last_salary", salary_input.value)
+
+    def save_ndic(e):
+        page.client_storage.set("last_ndic", ndic_input.value)
+
     # --- CALCULATOR FORM ---
     salary_input = ft.TextField(
         label="Basic Salary (₦)",
+        value=last_salary if last_salary else "",
         keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
         hint_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        on_change=save_salary
     )
 
     ndic_input = ft.TextField(
         label="NDIC Increment (%)",
-        value="0",
+        value=last_ndic if last_ndic else "0",
         keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        on_change=save_ndic
     )
 
     level_dropdown = ft.Dropdown(
@@ -161,10 +179,12 @@ def main(page: ft.Page):
         options=[
             ft.dropdown.Option(
                 key="junior",
+                text="Junior Staff (40%)",
                 content=ft.Text("Junior Staff (40%)", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=15)
             ),
             ft.dropdown.Option(
                 key="senior",
+                text="Senior Staff (45%)",
                 content=ft.Text("Senior Staff (45%)", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=15)
             ),
         ],
@@ -190,13 +210,9 @@ def main(page: ft.Page):
 
             rate = 0.40 if level == "junior" else 0.45
 
-            # NDIC Addition = percentage of the monthly Basic Salary
             ndic_amount = salary * (ndic_pct / 100.0)
-            # New Basic = Basic Salary + NDIC Addition (still a monthly figure)
             new_basic = salary + ndic_amount
-            # Annual Salary = New Basic x 12
             annual_salary = new_basic * 12.0
-            # Upfront = percentage (junior/senior rate) of the Annual Salary
             upfront_amount = annual_salary * rate
 
             result_upfront.spans[1].text = f"₦{upfront_amount:,.2f}"
