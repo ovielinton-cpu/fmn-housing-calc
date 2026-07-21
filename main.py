@@ -3,7 +3,7 @@ import os
 import json
 
 def main(page: ft.Page):
-    page.title = "FMN Housing Upfront Calculator"
+    page.title = "Housing Upfront Calculator"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.adaptive = True
     page.padding = 0
@@ -11,7 +11,6 @@ def main(page: ft.Page):
     DARK_TEXT = "#222222"
     PURPLE_TEXT = "#4B0082"
 
-    # --- NAME DIALOG (used both for first-time setup and "Change Name" button) ---
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
 
     def open_name_dialog(e=None):
@@ -64,7 +63,6 @@ def main(page: ft.Page):
         wrap=True,
     )
 
-    # --- TERMS AND CONDITIONS DIALOG (first launch only) ---
     def close_terms(e):
         page.client_storage.set("terms_accepted", True)
         page.close(terms_dialog)
@@ -75,10 +73,10 @@ def main(page: ft.Page):
         [
             ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
             ft.Text(
-                "1. Purpose: This application is provided as a tool to assist FMN staff in estimating their Housing Upfront payments.\n\n"
-                "2. Accuracy: All calculations are estimates based on the information provided. These figures should be verified against official FMN payroll policies.\n\n"
+                "1. Purpose: This application is provided as a general tool to help staff of any organization estimate their housing upfront payments, based on figures and rates you enter yourself.\n\n"
+                "2. Accuracy: All calculations are estimates based on the information you provide. These figures should be verified against your own organization's official payroll policy.\n\n"
                 "3. Disclaimer: The developer is not responsible for any financial decisions made based on these calculations. Please consult with your HR department for official confirmation.\n\n"
-                "4. Privacy: No personal data or salary information is stored, transmitted, or shared externally by this application.",
+                "4. Privacy: No personal data or salary information is stored, transmitted, or shared externally by this application. Everything you enter stays on your device.",
                 color=DARK_TEXT,
                 size=14
             ),
@@ -100,7 +98,6 @@ def main(page: ft.Page):
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    # --- HEADER SETUP ---
     logo_image = ft.Image(
         src="logo.png",
         width=90,
@@ -109,7 +106,7 @@ def main(page: ft.Page):
     )
 
     header_text = ft.Text(
-        "FMN Housing Upfront Calculator",
+        "Housing Upfront Calculator",
         size=22,
         weight=ft.FontWeight.BOLD,
         color="white",
@@ -133,25 +130,36 @@ def main(page: ft.Page):
     except Exception:
         pass
 
-    try:
-        last_salary = page.client_storage.get("last_salary")
-    except Exception:
-        last_salary = None
-    try:
-        last_ndic = page.client_storage.get("last_ndic")
-    except Exception:
-        last_ndic = None
+    def load_saved(key, default=""):
+        try:
+            val = page.client_storage.get(key)
+            return val if val else default
+        except Exception:
+            return default
 
-    def save_salary(e):
-        page.client_storage.set("last_salary", salary_input.value)
+    last_org = load_saved("last_org", "")
+    last_salary = load_saved("last_salary", "")
+    last_increment_label = load_saved("last_increment_label", "Salary Increment")
+    last_increment_pct = load_saved("last_increment_pct", "0")
+    last_rate_pct = load_saved("last_rate_pct", "40")
 
-    def save_ndic(e):
-        page.client_storage.set("last_ndic", ndic_input.value)
+    def save_field(key, value):
+        page.client_storage.set(key, value)
 
-    # --- CALCULATOR FORM ---
+    org_input = ft.TextField(
+        label="Company / Organization Name (optional)",
+        value=last_org,
+        bgcolor="#FFFFFF",
+        border_color=PURPLE_TEXT,
+        color=PURPLE_TEXT,
+        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        on_change=lambda e: save_field("last_org", org_input.value)
+    )
+
     salary_input = ft.TextField(
         label="Basic Salary (₦)",
-        value=last_salary if last_salary else "",
+        value=last_salary,
         keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
@@ -159,65 +167,65 @@ def main(page: ft.Page):
         hint_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        on_change=save_salary
+        on_change=lambda e: save_field("last_salary", salary_input.value)
     )
 
-    ndic_input = ft.TextField(
-        label="NDIC Increment (%)",
-        value=last_ndic if last_ndic else "0",
+    increment_label_input = ft.TextField(
+        label="Increment Name (e.g. NDIC, Housing Allowance, etc.)",
+        value=last_increment_label,
+        bgcolor="#FFFFFF",
+        border_color=PURPLE_TEXT,
+        color=PURPLE_TEXT,
+        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        on_change=lambda e: save_field("last_increment_label", increment_label_input.value)
+    )
+
+    increment_input = ft.TextField(
+        label="Increment (%)",
+        value=last_increment_pct,
         keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        on_change=save_ndic
+        on_change=lambda e: save_field("last_increment_pct", increment_input.value)
     )
 
-    level_dropdown = ft.Dropdown(
-        label="Staff Level",
-        options=[
-            ft.dropdown.Option(
-                key="junior",
-                text="Junior Staff (40%)",
-                content=ft.Text("Junior Staff (40%)", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=15)
-            ),
-            ft.dropdown.Option(
-                key="senior",
-                text="Senior Staff (45%)",
-                content=ft.Text("Senior Staff (45%)", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=15)
-            ),
-        ],
-        value="junior",
+    rate_input = ft.TextField(
+        label="Housing Upfront Rate (%)",
+        value=last_rate_pct,
+        keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        on_change=lambda e: save_field("last_rate_pct", rate_input.value)
     )
 
-    # --- RESULTS DISPLAY ---
     result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
     result_basic = ft.Text(spans=[ft.TextSpan("New Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-    result_ndic = ft.Text(spans=[ft.TextSpan("NDIC Addition: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+    result_increment = ft.Text(spans=[ft.TextSpan("Increment Addition: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
     result_total = ft.Text(spans=[ft.TextSpan("Annual Salary: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
 
     def on_calculate_click(e):
         try:
             salary = float(salary_input.value)
-            ndic_pct = float(ndic_input.value)
-            level = level_dropdown.value
+            increment_pct = float(increment_input.value)
+            rate_pct = float(rate_input.value)
+            increment_name = increment_label_input.value.strip() or "Increment"
 
-            rate = 0.40 if level == "junior" else 0.45
-
-            ndic_amount = salary * (ndic_pct / 100.0)
-            new_basic = salary + ndic_amount
+            increment_amount = salary * (increment_pct / 100.0)
+            new_basic = salary + increment_amount
             annual_salary = new_basic * 12.0
-            upfront_amount = annual_salary * rate
+            upfront_amount = annual_salary * (rate_pct / 100.0)
 
             result_upfront.spans[1].text = f"₦{upfront_amount:,.2f}"
             result_basic.spans[1].text = f"₦{new_basic:,.2f}"
-            result_ndic.spans[1].text = f"₦{ndic_amount:,.2f}"
+            result_increment.spans[0].text = f"{increment_name} Addition: "
+            result_increment.spans[1].text = f"₦{increment_amount:,.2f}"
             result_total.spans[1].text = f"₦{annual_salary:,.2f}"
 
             page.update()
@@ -228,7 +236,10 @@ def main(page: ft.Page):
     calc_btn = ft.ElevatedButton("Calculate Upfront", on_click=on_calculate_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082", text_style=ft.TextStyle(weight=ft.FontWeight.BOLD)))
 
     form_container = ft.Container(
-        content=ft.Column(controls=[salary_input, ndic_input, level_dropdown, calc_btn], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15, tight=True),
+        content=ft.Column(
+            controls=[org_input, salary_input, increment_label_input, increment_input, rate_input, calc_btn],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15, tight=True
+        ),
         padding=20,
         border_radius=15,
         bgcolor="#F5F5F0",
@@ -237,7 +248,7 @@ def main(page: ft.Page):
     form_card = ft.Card(content=form_container, elevation=5)
 
     results_container = ft.Container(
-        content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_ndic, result_total], spacing=8, tight=True),
+        content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_increment, result_total], spacing=8, tight=True),
         padding=15,
         border_radius=15,
         bgcolor="#FFFFFF",
