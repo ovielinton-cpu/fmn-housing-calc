@@ -11,9 +11,66 @@ def main(page: ft.Page):
     DARK_TEXT = "#222222"
     PURPLE_TEXT = "#4B0082"
 
-    # --- 3. TERMS AND CONDITIONS DIALOG ---
+    # --- NAME DIALOG (used both for first-time setup and "Change" button) ---
+    greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
+
+    def open_name_dialog(e=None):
+        def save_name(e):
+            new_name = name_field.value
+            greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
+            page.client_storage.set("user_name", new_name)
+            page.close(name_dialog)
+            page.update()
+
+        name_field = ft.TextField(
+            label="Your Name",
+            value=greeting_name.value.split("!")[0] if "👋" in greeting_name.value else "",
+            autofocus=True,
+            bgcolor="#FFFFFF",
+            color=PURPLE_TEXT,
+            label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
+        )
+        name_dialog = ft.AlertDialog(
+            modal=True,
+            bgcolor="#FFFFFF",
+            title=ft.Text("Welcome!", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "Please enter your name so we can greet you personally.",
+                            color=DARK_TEXT,
+                            size=14
+                        ),
+                        name_field,
+                    ],
+                    tight=True,
+                    spacing=15
+                ),
+                width=300,
+                padding=10
+            ),
+            actions=[ft.TextButton("Save", on_click=save_name, style=ft.ButtonStyle(color=PURPLE_TEXT))],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.open(name_dialog)
+
+    change_btn = ft.ElevatedButton("Change", on_click=open_name_dialog, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
+
+    greeting_row = ft.Row(
+        controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=10,
+        wrap=True,
+    )
+
+    # --- TERMS AND CONDITIONS DIALOG (first launch only) ---
     def close_terms(e):
+        page.client_storage.set("terms_accepted", True)
         page.close(terms_dialog)
+        # After agreeing, if no name saved yet, ask for it once.
+        if not page.client_storage.get("user_name"):
+            open_name_dialog()
 
     terms_content = ft.Column(
         [
@@ -34,6 +91,7 @@ def main(page: ft.Page):
 
     terms_dialog = ft.AlertDialog(
         modal=True,
+        bgcolor="#FFFFFF",
         title=ft.Text("Welcome & Agreement", weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
         content=ft.Container(content=terms_content, width=320, height=350),
         actions=[
@@ -43,7 +101,7 @@ def main(page: ft.Page):
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    # --- 1. HEADER SETUP ---
+    # --- HEADER SETUP ---
     logo_image = ft.Image(
         src="logo.png",
         width=90,
@@ -69,31 +127,7 @@ def main(page: ft.Page):
         width=None,
     )
 
-    # --- GREETING SECTION ---
-    greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
-
-    def on_change_click(e):
-        def save_name(e):
-            new_name = name_field.value
-            greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
-            page.client_storage.set("user_name", new_name)
-            page.close(dialog)
-
-        name_field = ft.TextField(
-            label="Your Name",
-            value=greeting_name.value.split("!")[0] if "👋" in greeting_name.value else "",
-            autofocus=True,
-            color=PURPLE_TEXT,
-            label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
-        )
-        dialog = ft.AlertDialog(
-            title=ft.Text("Update Name", color=PURPLE_TEXT),
-            content=name_field,
-            actions=[ft.TextButton("Save", on_click=save_name)],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-        page.open(dialog)
-
+    # Load saved name on startup, if any
     try:
         saved_name = page.client_storage.get("user_name")
         if saved_name:
@@ -101,16 +135,7 @@ def main(page: ft.Page):
     except Exception:
         pass
 
-    change_btn = ft.ElevatedButton("Change", on_click=on_change_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
-
-    greeting_row = ft.Row(
-        controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
-        alignment=ft.MainAxisAlignment.CENTER,
-        spacing=10,
-        wrap=True,
-    )
-
-    # --- 2. CALCULATOR FORM ---
+    # --- CALCULATOR FORM ---
     salary_input = ft.TextField(
         label="Basic Salary (₦)",
         keyboard_type=ft.KeyboardType.NUMBER,
@@ -147,7 +172,7 @@ def main(page: ft.Page):
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
     )
 
-    # --- 4. RESULTS DISPLAY ---
+    # --- RESULTS DISPLAY ---
     result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
     result_basic = ft.Text(spans=[ft.TextSpan("Annual Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
     result_ndic = ft.Text(spans=[ft.TextSpan("NDIC Addition: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
@@ -222,7 +247,19 @@ def main(page: ft.Page):
     )
 
     page.add(view_container)
-    page.open(terms_dialog)
+
+    # --- STARTUP FLOW ---
+    # Show terms only the very first time the app is ever opened.
+    # After that, if no name is saved yet, prompt for it once.
+    try:
+        terms_already_accepted = page.client_storage.get("terms_accepted")
+    except Exception:
+        terms_already_accepted = False
+
+    if not terms_already_accepted:
+        page.open(terms_dialog)
+    elif not page.client_storage.get("user_name"):
+        open_name_dialog()
 
 if __name__ == "__main__":
     ft.app(target=main, view=ft.AppView.WEB_BROWSER)
