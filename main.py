@@ -6,19 +6,19 @@ def main(page: ft.Page):
     page.title = "FMN Housing Upfront Calculator"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.adaptive = True
-    page.padding = 0 
+    page.padding = 0
 
-    # High-contrast color rule for clear visibility
     DARK_TEXT = "#222222"
+    PURPLE_TEXT = "#4B0082"
 
-    # --- 3. TERMS AND CONDITIONS LOGIC ---
+    # --- 3. TERMS AND CONDITIONS DIALOG ---
     def close_terms(e):
         terms_dialog.open = False
         page.update()
 
     terms_content = ft.Column(
         [
-            ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=DARK_TEXT),
+            ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
             ft.Text(
                 "1. Purpose: This application is provided as a tool to assist FMN staff in estimating their Housing Upfront payments.\n\n"
                 "2. Accuracy: All calculations are estimates based on the information provided. These figures should be verified against official FMN payroll policies.\n\n"
@@ -35,23 +35,25 @@ def main(page: ft.Page):
 
     terms_dialog = ft.AlertDialog(
         modal=True,
-        title=ft.Text("Welcome & Agreement", weight=ft.FontWeight.BOLD),
+        title=ft.Text("Welcome & Agreement", weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
         content=ft.Container(content=terms_content, width=320, height=350),
         actions=[
-            ft.TextButton("I Agree", on_click=close_terms, style=ft.ButtonStyle(color="#4B0082")),
+            ft.TextButton("I Agree", on_click=close_terms, style=ft.ButtonStyle(color=PURPLE_TEXT)),
             ft.TextButton("I Don't Agree", on_click=lambda e: page.window_close(), style=ft.ButtonStyle(color="red")),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
     # --- 1. HEADER SETUP ---
+    # FIX 1: path is relative to the assets_dir root, so no "assets/" prefix.
+    # Make sure the file physically lives at: <project_root>/assets/logo.png
     logo_image = ft.Image(
-        src="assets/logo.png",  
-        width=90, 
-        height=90, 
-        fit="contain"           
+        src="logo.png",
+        width=90,
+        height=90,
+        fit="contain"
     )
-    
+
     header_text = ft.Text(
         "FMN Housing Upfront Calculator",
         size=22,
@@ -59,33 +61,40 @@ def main(page: ft.Page):
         color="white",
         text_align=ft.TextAlign.CENTER
     )
-    
+
     header_container = ft.Container(
         content=ft.Column(
             controls=[logo_image, header_text],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=8
         ),
-        padding=20, 
-        width=350,
+        padding=20,
+        # FIX 2: no fixed width — sizes to its content/parent instead
+        width=None,
     )
 
     # --- GREETING SECTION ---
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
-    
+
     def on_change_click(e):
         def save_name(e):
             new_name = name_field.value
             greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
-            data = {"user_name": new_name}
-            with open("user_prefs.json", "w") as f:
-                json.dump(data, f)
+            # FIX 3: client_storage works reliably across web/desktop/mobile builds,
+            # unlike writing a json file to the working directory (often blocked/sandboxed on device).
+            page.client_storage.set("user_name", new_name)
             dialog.open = False
             page.update()
 
-        name_field = ft.TextField(label="Your Name", value=greeting_name.value.split("!")[0] if "👋" in greeting_name.value else "", autofocus=True)
+        name_field = ft.TextField(
+            label="Your Name",
+            value=greeting_name.value.split("!")[0] if "👋" in greeting_name.value else "",
+            autofocus=True,
+            color=PURPLE_TEXT,
+            label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
+        )
         dialog = ft.AlertDialog(
-            title=ft.Text("Update Name"),
+            title=ft.Text("Update Name", color=PURPLE_TEXT),
             content=name_field,
             actions=[ft.TextButton("Save", on_click=save_name)],
             actions_alignment=ft.MainAxisAlignment.END,
@@ -95,12 +104,10 @@ def main(page: ft.Page):
         page.update()
 
     try:
-        if os.path.exists("user_prefs.json"):
-            with open("user_prefs.json", "r") as f:
-                loaded_data = json.load(f)
-                if loaded_data.get("user_name"):
-                    greeting_name.value = f"{loaded_data['user_name']}! 👋"
-    except:
+        saved_name = page.client_storage.get("user_name")
+        if saved_name:
+            greeting_name.value = f"{saved_name}! 👋"
+    except Exception:
         pass
 
     change_btn = ft.ElevatedButton("Change", on_click=on_change_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
@@ -108,27 +115,33 @@ def main(page: ft.Page):
     greeting_row = ft.Row(
         controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
         alignment=ft.MainAxisAlignment.CENTER,
-        spacing=10
+        spacing=10,
+        wrap=True,
     )
 
     # --- 2. CALCULATOR FORM ---
     salary_input = ft.TextField(
-        label="Basic Salary (₦)", 
-        keyboard_type=ft.KeyboardType.NUMBER, 
-        bgcolor="#FFFFFF", 
-        border_color="#4B0082",
-        color=DARK_TEXT,
-        label_style=ft.TextStyle(color=DARK_TEXT)
+        label="Basic Salary (₦)",
+        keyboard_type=ft.KeyboardType.NUMBER,
+        bgcolor="#FFFFFF",
+        border_color=PURPLE_TEXT,
+        color=PURPLE_TEXT,
+        hint_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
     )
+
     ndic_input = ft.TextField(
-        label="NDIC Addition (%)", 
-        value="0", 
-        keyboard_type=ft.KeyboardType.NUMBER, 
-        bgcolor="#FFFFFF", 
-        border_color="#4B0082",
-        color=DARK_TEXT,
-        label_style=ft.TextStyle(color=DARK_TEXT)
+        label="NDIC Increment (%)",
+        value="0",
+        keyboard_type=ft.KeyboardType.NUMBER,
+        bgcolor="#FFFFFF",
+        border_color=PURPLE_TEXT,
+        color=PURPLE_TEXT,
+        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
     )
+
     level_dropdown = ft.Dropdown(
         label="Staff Level",
         options=[
@@ -137,9 +150,10 @@ def main(page: ft.Page):
         ],
         value="junior",
         bgcolor="#FFFFFF",
-        border_color="#4B0082",
-        color=DARK_TEXT,
-        label_style=ft.TextStyle(color=DARK_TEXT)
+        border_color=PURPLE_TEXT,
+        color=PURPLE_TEXT,
+        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)
     )
 
     # --- 4. RESULTS DISPLAY ---
@@ -153,19 +167,19 @@ def main(page: ft.Page):
             salary = float(salary_input.value)
             ndic_pct = float(ndic_input.value)
             level = level_dropdown.value
-            
+
             rate = 0.40 if level == "junior" else 0.45
-            
+
             annual_basic = salary * 12.0
             ndic_amount = annual_basic * (ndic_pct / 100.0)
             annual_total = annual_basic + ndic_amount
             upfront_amount = annual_total * rate
-            
+
             result_upfront.spans[1].text = f"₦{upfront_amount:,.2f}"
             result_basic.spans[1].text = f"₦{annual_basic:,.2f}"
             result_ndic.spans[1].text = f"₦{ndic_amount:,.2f}"
             result_total.spans[1].text = f"₦{annual_total:,.2f}"
-            
+
             page.update()
         except ValueError:
             result_upfront.spans[1].text = "Invalid Input"
@@ -173,12 +187,12 @@ def main(page: ft.Page):
 
     calc_btn = ft.ElevatedButton("Calculate Upfront", on_click=on_calculate_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082", text_style=ft.TextStyle(weight=ft.FontWeight.BOLD)))
 
+    # FIX 2 (cont.): replaced fixed width=350 with max_width via a responsive container below.
     form_container = ft.Container(
         content=ft.Column(controls=[salary_input, ndic_input, level_dropdown, calc_btn], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15, tight=True),
         padding=20,
         border_radius=15,
         bgcolor="#F5F5F0",
-        width=350,
         shadow=ft.BoxShadow(blur_radius=10, color="#333333")
     )
     form_card = ft.Card(content=form_container, elevation=5)
@@ -188,16 +202,27 @@ def main(page: ft.Page):
         padding=15,
         border_radius=15,
         bgcolor="#FFFFFF",
-        width=350,
         border=ft.Border(ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700")),
         shadow=ft.BoxShadow(blur_radius=5, color="#333333")
     )
 
+    # FIX 2 (cont.): a single responsive wrapper caps content width on large screens
+    # (tablets/web) but lets it fill narrower phone screens instead of clipping/overflowing.
+    content_wrapper = ft.Container(
+        content=ft.Column(
+            controls=[header_container, greeting_row, form_card, ft.Container(height=10), results_container],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=5,
+        ),
+        width=400,
+        alignment=ft.alignment.top_center,
+    )
+
     main_content = ft.Column(
-        controls=[header_container, greeting_row, form_card, ft.Container(height=10), results_container],
+        controls=[content_wrapper],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        spacing=5,
-        expand=True
+        expand=True,
+        scroll=ft.ScrollMode.AUTO,
     )
 
     view_container = ft.Container(
@@ -209,13 +234,11 @@ def main(page: ft.Page):
     )
 
     page.add(view_container)
-    
-    # --- FIXED STARTUP DIALOG ---
-    # Bypassed page.run_task entirely to prevent the coroutine TypeErrors.
+
     page.dialog = terms_dialog
     terms_dialog.open = True
     page.update()
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER)
     
