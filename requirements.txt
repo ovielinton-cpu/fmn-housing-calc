@@ -1,2 +1,2 @@
-flet==0.80.0
+flet==0.83.0
 flet-ads
