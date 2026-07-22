@@ -2,7 +2,7 @@ import flet as ft
 import flet_ads as fta
 
 async def main(page: ft.Page):
-    page.title = "Housing Upfront Calculator"
+    page.title = "Housing-Salary Calc"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.adaptive = True
     page.padding = 0
@@ -111,7 +111,7 @@ async def main(page: ft.Page):
     )
 
     header_text = ft.Text(
-        "Housing Upfront Calculator",
+        "Housing-Salary Calc",
         size=22,
         weight=ft.FontWeight.BOLD,
         color="white",
@@ -314,11 +314,20 @@ async def main(page: ft.Page):
         scroll=ft.ScrollMode.AUTO,
     )
 
-    view_container = ft.Container(
-        content=main_content,
-        gradient=ft.LinearGradient(begin=ft.Alignment(0, -1), end=ft.Alignment(0, 1), colors=["#4B0082", "#E6E6FA"]),
-        alignment=ft.Alignment(0, -1),
-        padding=10,
+    view_container = ft.Stack(
+        controls=[
+            ft.Image(
+                src="background.png",
+                fit=ft.ImageFit.COVER,
+                expand=True,
+            ),
+            ft.Container(
+                content=main_content,
+                alignment=ft.Alignment(0, -1),
+                padding=10,
+                expand=True
+            ),
+        ],
         expand=True
     )
 
