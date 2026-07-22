@@ -57,14 +57,26 @@ async def build_ui(page: ft.Page):
             actions_alignment=ft.MainAxisAlignment.END,
         )
         page.show_dialog(name_dialog)
+change_btn = ft.ElevatedButton(
+        "Change Name",
+        on_click=open_name_dialog,
+        style=ft.ButtonStyle(
+            bgcolor="#FFD700",
+            color="#4B0082",
+            text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, size=16)
+        )
+)
 
-    change_btn = ft.ElevatedButton("Change Name", on_click=open_name_dialog, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
-
-    greeting_row = ft.Row(
-        controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
-        alignment=ft.MainAxisAlignment.CENTER,
-        spacing=10,
-        wrap=True,
+    greeting_row = ft.Container(
+        content=ft.Row(
+            controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=10,
+            wrap=True,
+        ),
+        bgcolor="#00000080",
+        border_radius=10,
+        padding=ft.Padding(left=12, right=12, top=8, bottom=8),
     )
 
     async def close_terms(e):
@@ -110,12 +122,17 @@ async def build_ui(page: ft.Page):
         fit=ft.BoxFit.CONTAIN
     )
 
-    header_text = ft.Text(
-        "Housing-Salary Calc",
-        size=22,
-        weight=ft.FontWeight.BOLD,
-        color="white",
-        text_align=ft.TextAlign.CENTER
+    header_text = ft.Container(
+        content=ft.Text(
+            "Housing-Salary Calc",
+            size=22,
+            weight=ft.FontWeight.BOLD,
+            color="white",
+            text_align=ft.TextAlign.CENTER
+        ),
+        bgcolor="#00000080",
+        border_radius=10,
+        padding=ft.Padding(left=16, right=16, top=8, bottom=8),
     )
 
     header_container = ft.Container(
