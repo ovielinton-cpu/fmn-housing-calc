@@ -57,7 +57,8 @@ async def build_ui(page: ft.Page):
             actions_alignment=ft.MainAxisAlignment.END,
         )
         page.show_dialog(name_dialog)
-change_btn = ft.ElevatedButton(
+
+    change_btn = ft.ElevatedButton(
         "Change Name",
         on_click=open_name_dialog,
         style=ft.ButtonStyle(
@@ -65,7 +66,7 @@ change_btn = ft.ElevatedButton(
             color="#4B0082",
             text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, size=16)
         )
-)
+    )
 
     greeting_row = ft.Container(
         content=ft.Row(
