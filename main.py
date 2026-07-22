@@ -1,6 +1,5 @@
 import flet as ft
-import os
-import json
+import flet_ads as fta
 
 def main(page: ft.Page):
     page.title = "Housing Upfront Calculator"
@@ -11,6 +10,11 @@ def main(page: ft.Page):
     DARK_TEXT = "#222222"
     PURPLE_TEXT = "#4B0082"
 
+    BANNER_AD_UNIT_ID = {
+        ft.PagePlatform.ANDROID: "ca-app-pub-3940256099942544/6300978111",
+        ft.PagePlatform.IOS: "ca-app-pub-3940256099942544/2934735716",
+    }
+
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
 
     def open_name_dialog(e=None):
@@ -18,7 +22,7 @@ def main(page: ft.Page):
             new_name = name_field.value
             greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
             page.client_storage.set("user_name", new_name)
-            page.close(name_dialog)
+            page.pop_dialog()
             page.update()
 
         name_field = ft.TextField(
@@ -52,7 +56,7 @@ def main(page: ft.Page):
             actions=[ft.TextButton("Save", on_click=save_name, style=ft.ButtonStyle(color=PURPLE_TEXT))],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        page.open(name_dialog)
+        page.show_dialog(name_dialog)
 
     change_btn = ft.ElevatedButton("Change Name", on_click=open_name_dialog, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082"))
 
@@ -65,7 +69,7 @@ def main(page: ft.Page):
 
     def close_terms(e):
         page.client_storage.set("terms_accepted", True)
-        page.close(terms_dialog)
+        page.pop_dialog()
         if not page.client_storage.get("user_name"):
             open_name_dialog()
 
@@ -256,9 +260,22 @@ def main(page: ft.Page):
         shadow=ft.BoxShadow(blur_radius=5, color="#333333")
     )
 
+    banner_ad_slot = ft.Container(height=50, alignment=ft.Alignment(0, 0))
+
+    def load_banner_ad():
+        if page.platform in (ft.PagePlatform.ANDROID, ft.PagePlatform.IOS):
+            banner_ad_slot.content = fta.BannerAd(
+                unit_id=BANNER_AD_UNIT_ID.get(page.platform, BANNER_AD_UNIT_ID[ft.PagePlatform.ANDROID]),
+                width=320,
+                height=50,
+                on_load=lambda e: print("BannerAd loaded"),
+                on_error=lambda e: print("BannerAd error", e.data),
+            )
+            page.update()
+
     content_wrapper = ft.Container(
         content=ft.Column(
-            controls=[header_container, greeting_row, form_card, ft.Container(height=10), results_container],
+            controls=[header_container, greeting_row, form_card, ft.Container(height=10), results_container, ft.Container(height=10), banner_ad_slot],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=5,
         ),
@@ -282,6 +299,7 @@ def main(page: ft.Page):
     )
 
     page.add(view_container)
+    load_banner_ad()
 
     try:
         terms_already_accepted = page.client_storage.get("terms_accepted")
@@ -289,9 +307,9 @@ def main(page: ft.Page):
         terms_already_accepted = False
 
     if not terms_already_accepted:
-        page.open(terms_dialog)
+        page.show_dialog(terms_dialog)
     elif not page.client_storage.get("user_name"):
         open_name_dialog()
 
 if __name__ == "__main__":
-    ft.app(target=main, view=ft.AppView.WEB_BROWSER)
+    ft.run(main)
