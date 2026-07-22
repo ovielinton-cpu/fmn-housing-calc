@@ -1,4 +1,4 @@
-name: "Housing Upfront Calculator"
-description: "A tool to calculate housing upfront for any organization's staff."
+name: "Housing-Salary Calc"
+description: "A general tool to calculate housing upfront and salary for any organization's staff."
 icon: "assets/icon.png"
 assets: assets
