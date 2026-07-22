@@ -1,7 +1,7 @@
 import flet as ft
 import flet_ads as fta
 
-def main(page: ft.Page):
+async def main(page: ft.Page):
     page.title = "Housing Upfront Calculator"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.adaptive = True
@@ -18,10 +18,10 @@ def main(page: ft.Page):
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
 
     def open_name_dialog(e=None):
-        def save_name(e):
+        async def save_name(e):
             new_name = name_field.value
             greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
-            page.client_storage.set("user_name", new_name)
+            await page.shared_preferences.set("user_name", new_name)
             page.pop_dialog()
             page.update()
 
@@ -67,10 +67,11 @@ def main(page: ft.Page):
         wrap=True,
     )
 
-    def close_terms(e):
-        page.client_storage.set("terms_accepted", True)
+    async def close_terms(e):
+        await page.shared_preferences.set("terms_accepted", True)
         page.pop_dialog()
-        if not page.client_storage.get("user_name"):
+        existing_name = await page.shared_preferences.get("user_name")
+        if not existing_name:
             open_name_dialog()
 
     terms_content = ft.Column(
@@ -128,27 +129,39 @@ def main(page: ft.Page):
     )
 
     try:
-        saved_name = page.client_storage.get("user_name")
+        saved_name = await page.shared_preferences.get("user_name")
         if saved_name:
             greeting_name.value = f"{saved_name}! 👋"
     except Exception:
         pass
 
-    def load_saved(key, default=""):
+    async def load_saved(key, default=""):
         try:
-            val = page.client_storage.get(key)
+            val = await page.shared_preferences.get(key)
             return val if val else default
         except Exception:
             return default
 
-    last_org = load_saved("last_org", "")
-    last_salary = load_saved("last_salary", "")
-    last_increment_label = load_saved("last_increment_label", "Salary Increment")
-    last_increment_pct = load_saved("last_increment_pct", "0")
-    last_rate_pct = load_saved("last_rate_pct", "40")
+    last_org = await load_saved("last_org", "")
+    last_salary = await load_saved("last_salary", "")
+    last_increment_label = await load_saved("last_increment_label", "Salary Increment")
+    last_increment_pct = await load_saved("last_increment_pct", "0")
+    last_rate_pct = await load_saved("last_rate_pct", "40")
 
-    def save_field(key, value):
-        page.client_storage.set(key, value)
+    async def on_org_change(e):
+        await page.shared_preferences.set("last_org", org_input.value)
+
+    async def on_salary_change(e):
+        await page.shared_preferences.set("last_salary", salary_input.value)
+
+    async def on_increment_label_change(e):
+        await page.shared_preferences.set("last_increment_label", increment_label_input.value)
+
+    async def on_increment_change(e):
+        await page.shared_preferences.set("last_increment_pct", increment_input.value)
+
+    async def on_rate_change(e):
+        await page.shared_preferences.set("last_rate_pct", rate_input.value)
 
     org_input = ft.TextField(
         label="Company / Organization Name (optional)",
@@ -158,7 +171,7 @@ def main(page: ft.Page):
         color=PURPLE_TEXT,
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        on_change=lambda e: save_field("last_org", org_input.value)
+        on_change=on_org_change
     )
 
     salary_input = ft.TextField(
@@ -171,7 +184,7 @@ def main(page: ft.Page):
         hint_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        on_change=lambda e: save_field("last_salary", salary_input.value)
+        on_change=on_salary_change
     )
 
     increment_label_input = ft.TextField(
@@ -182,7 +195,7 @@ def main(page: ft.Page):
         color=PURPLE_TEXT,
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        on_change=lambda e: save_field("last_increment_label", increment_label_input.value)
+        on_change=on_increment_label_change
     )
 
     increment_input = ft.TextField(
@@ -194,7 +207,7 @@ def main(page: ft.Page):
         color=PURPLE_TEXT,
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        on_change=lambda e: save_field("last_increment_pct", increment_input.value)
+        on_change=on_increment_change
     )
 
     rate_input = ft.TextField(
@@ -206,7 +219,7 @@ def main(page: ft.Page):
         color=PURPLE_TEXT,
         label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        on_change=lambda e: save_field("last_rate_pct", rate_input.value)
+        on_change=on_rate_change
     )
 
     result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
@@ -302,14 +315,16 @@ def main(page: ft.Page):
     load_banner_ad()
 
     try:
-        terms_already_accepted = page.client_storage.get("terms_accepted")
+        terms_already_accepted = await page.shared_preferences.get("terms_accepted")
     except Exception:
         terms_already_accepted = False
 
     if not terms_already_accepted:
         page.show_dialog(terms_dialog)
-    elif not page.client_storage.get("user_name"):
-        open_name_dialog()
+    else:
+        existing_name = await page.shared_preferences.get("user_name")
+        if not existing_name:
+            open_name_dialog()
 
 if __name__ == "__main__":
     ft.run(main)
