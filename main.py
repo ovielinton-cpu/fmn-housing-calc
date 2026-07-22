@@ -319,13 +319,19 @@ async def main(page: ft.Page):
             ft.Image(
                 src="background.png",
                 fit=ft.ImageFit.COVER,
-                expand=True,
+                left=0,
+                top=0,
+                right=0,
+                bottom=0,
             ),
             ft.Container(
                 content=main_content,
                 alignment=ft.Alignment(0, -1),
                 padding=10,
-                expand=True
+                left=0,
+                top=0,
+                right=0,
+                bottom=0,
             ),
         ],
         expand=True
