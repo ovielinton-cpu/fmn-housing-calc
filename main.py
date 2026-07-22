@@ -1,7 +1,7 @@
 import flet as ft
 import flet_ads as fta
 
-async def main(page: ft.Page):
+async def build_ui(page: ft.Page):
     page.title = "Housing-Salary Calc"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.adaptive = True
@@ -351,6 +351,31 @@ async def main(page: ft.Page):
         existing_name = await page.shared_preferences.get("user_name")
         if not existing_name:
             open_name_dialog()
+
+async def main(page: ft.Page):
+    try:
+        await build_ui(page)
+    except Exception as ex:
+        import traceback
+        page.controls.clear()
+        page.bgcolor = "#4B0082"
+        page.add(
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text("Startup Error", size=20, weight=ft.FontWeight.BOLD, color="white"),
+                        ft.Text(str(ex), size=14, color="yellow", selectable=True),
+                        ft.Divider(color="white"),
+                        ft.Text(traceback.format_exc(), size=10, color="white", selectable=True),
+                    ],
+                    scroll=ft.ScrollMode.AUTO,
+                    expand=True,
+                ),
+                padding=20,
+                expand=True,
+            )
+        )
+        page.update()
 
 if __name__ == "__main__":
     ft.run(main)
