@@ -107,7 +107,7 @@ async def build_ui(page: ft.Page):
         src="logo.png",
         width=90,
         height=90,
-        fit="contain"
+        fit=ft.BoxFit.CONTAIN
     )
 
     header_text = ft.Text(
@@ -318,7 +318,7 @@ async def build_ui(page: ft.Page):
         controls=[
             ft.Image(
                 src="background.png",
-                fit=ft.ImageFit.COVER,
+                fit=ft.BoxFit.COVER,
                 left=0,
                 top=0,
                 right=0,
