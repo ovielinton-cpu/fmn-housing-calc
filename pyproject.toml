@@ -1,0 +1,8 @@
+[project]
+name = "housing-salary-calc"
+version = "1.0.0"
+description = "A general tool to calculate housing upfront and salary for any organization's staff."
+
+[tool.flet]
+product = "Housing-Salary Calc"
+org = "com.linton"
