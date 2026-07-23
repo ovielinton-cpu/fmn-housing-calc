@@ -59,13 +59,9 @@ async def build_ui(page: ft.Page):
         page.show_dialog(name_dialog)
 
     change_btn = ft.ElevatedButton(
-        "Change Name",
+        content=ft.Text("Change Name", weight=ft.FontWeight.BOLD, size=16, color="#4B0082"),
         on_click=open_name_dialog,
-        style=ft.ButtonStyle(
-            bgcolor="#FFD700",
-            color="#4B0082",
-            text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, size=16)
-        )
+        style=ft.ButtonStyle(bgcolor="#FFD700")
     )
 
     greeting_row = ft.Container(
@@ -75,7 +71,7 @@ async def build_ui(page: ft.Page):
             spacing=10,
             wrap=True,
         ),
-        bgcolor="#00000080",
+        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         border_radius=10,
         padding=ft.Padding(left=12, right=12, top=8, bottom=8),
     )
@@ -104,6 +100,30 @@ async def build_ui(page: ft.Page):
         spacing=10
     )
 
+    def decline_terms(e):
+        page.pop_dialog()
+        page.controls.clear()
+        page.bgcolor = "#4B0082"
+        page.add(
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text("Agreement Required", size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER),
+                        ft.Text(
+                            "You must accept the Terms and Conditions to use this app. Please close and reopen the app if you'd like to review and accept them.",
+                            size=15, color="white", text_align=ft.TextAlign.CENTER
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=15,
+                ),
+                padding=30,
+                alignment=ft.Alignment(0, 0),
+                expand=True,
+            )
+        )
+        page.update()
+
     terms_dialog = ft.AlertDialog(
         modal=True,
         bgcolor="#FFFFFF",
@@ -111,7 +131,7 @@ async def build_ui(page: ft.Page):
         content=ft.Container(content=terms_content, width=320, height=350),
         actions=[
             ft.TextButton("I Agree", on_click=close_terms, style=ft.ButtonStyle(color=PURPLE_TEXT)),
-            ft.TextButton("I Don't Agree", on_click=lambda e: page.window.close(), style=ft.ButtonStyle(color="red")),
+            ft.TextButton("I Don't Agree", on_click=decline_terms, style=ft.ButtonStyle(color="red")),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
@@ -131,7 +151,7 @@ async def build_ui(page: ft.Page):
             color="white",
             text_align=ft.TextAlign.CENTER
         ),
-        bgcolor="#00000080",
+        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         border_radius=10,
         padding=ft.Padding(left=16, right=16, top=8, bottom=8),
     )
@@ -397,3 +417,4 @@ async def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.run(main)
+    
