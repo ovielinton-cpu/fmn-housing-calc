@@ -300,7 +300,6 @@ async def build_ui(page: ft.Page):
         bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         shadow=ft.BoxShadow(blur_radius=10, color="#333333")
     )
-    form_card = ft.Card(content=form_container, elevation=5, color=ft.Colors.TRANSPARENT)
 
     results_container = ft.Container(
         content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_increment, result_total], spacing=8, tight=True),
@@ -337,7 +336,7 @@ async def build_ui(page: ft.Page):
 
     content_wrapper = ft.Container(
         content=ft.Column(
-            controls=[header_container, greeting_row, form_card, ft.Container(height=10), results_container, ft.Container(height=10), banner_ad_slot],
+            controls=[header_container, greeting_row, form_container, ft.Container(height=10), results_container, ft.Container(height=10), banner_ad_slot],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=5,
         ),
