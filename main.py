@@ -226,7 +226,7 @@ async def build_ui(page: ft.Page):
     )
 
     increment_label_input = ft.TextField(
-        label="Increment Name (e.g. NDIC, Housing Allowance, etc.)",
+        label="Increment Name (e.g. NDIC)",
         value=last_increment_label,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
@@ -297,17 +297,17 @@ async def build_ui(page: ft.Page):
         ),
         padding=20,
         border_radius=15,
-        bgcolor=ft.Colors.with_opacity(0.20, ft.Colors.BLACK),
-        shadow=ft.BoxShadow(blur_radius=10, color="#333333")
+        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.BLACK),
+        shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.20, ft.Colors.BLACK))
     )
 
     results_container = ft.Container(
         content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_increment, result_total], spacing=8, tight=True),
         padding=15,
         border_radius=15,
-        bgcolor=ft.Colors.with_opacity(0.20, ft.Colors.BLACK),
+        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.BLACK),
         border=ft.Border(ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700")),
-        shadow=ft.BoxShadow(blur_radius=5, color="#333333")
+        shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK))
     )
 
     banner_ad_slot = ft.Container(
