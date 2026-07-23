@@ -253,10 +253,10 @@ async def build_ui(page: ft.Page):
     def field_with_caption(caption_text, field):
         return ft.Column(
             [
-                ft.Text(caption_text, color="#FF3B30", weight=ft.FontWeight.BOLD, size=14),
+                ft.Text(caption_text, color="#FF3B30", weight=ft.FontWeight.BOLD, size=12),
                 field,
             ],
-            spacing=4,
+            spacing=2,
             tight=True,
         )
 
