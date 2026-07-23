@@ -202,63 +202,63 @@ async def build_ui(page: ft.Page):
         await page.shared_preferences.set("last_rate_pct", rate_input.value)
 
     org_input = ft.TextField(
-        label="Company / Organization Name (optional)",
         value=last_org,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
-        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         on_change=on_org_change
     )
 
     salary_input = ft.TextField(
-        label="Basic Salary (₦)",
         value=last_salary,
         keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
         hint_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         on_change=on_salary_change
     )
 
     increment_label_input = ft.TextField(
-        label="Increment Name (e.g. NDIC)",
         value=last_increment_label,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
-        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         on_change=on_increment_label_change
     )
 
     increment_input = ft.TextField(
-        label="Increment (%)",
         value=last_increment_pct,
         keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
-        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         on_change=on_increment_change
     )
 
     rate_input = ft.TextField(
-        label="Housing Upfront Rate (%)",
         value=last_rate_pct,
         keyboard_type=ft.KeyboardType.NUMBER,
         bgcolor="#FFFFFF",
         border_color=PURPLE_TEXT,
         color=PURPLE_TEXT,
-        label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         on_change=on_rate_change
     )
+
+    def field_with_caption(caption_text, field):
+        return ft.Column(
+            [
+                ft.Text(caption_text, color="#FF3B30", weight=ft.FontWeight.BOLD, size=14),
+                field,
+            ],
+            spacing=4,
+            tight=True,
+        )
 
     result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
     result_basic = ft.Text(spans=[ft.TextSpan("New Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
@@ -292,7 +292,14 @@ async def build_ui(page: ft.Page):
 
     form_container = ft.Container(
         content=ft.Column(
-            controls=[org_input, salary_input, increment_label_input, increment_input, rate_input, calc_btn],
+            controls=[
+                field_with_caption("Company / Organization Name (optional)", org_input),
+                field_with_caption("Basic Salary (₦)", salary_input),
+                field_with_caption("Increment Name (e.g. NDIC)", increment_label_input),
+                field_with_caption("Increment (%)", increment_input),
+                field_with_caption("Housing Upfront Rate (%)", rate_input),
+                calc_btn
+            ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=30, tight=True
         ),
         padding=20,
