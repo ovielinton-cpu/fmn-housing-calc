@@ -297,16 +297,16 @@ async def build_ui(page: ft.Page):
         ),
         padding=20,
         border_radius=15,
-        bgcolor="#F5F5F0",
+        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         shadow=ft.BoxShadow(blur_radius=10, color="#333333")
     )
-    form_card = ft.Card(content=form_container, elevation=5)
+    form_card = ft.Card(content=form_container, elevation=5, color=ft.Colors.TRANSPARENT)
 
     results_container = ft.Container(
         content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_increment, result_total], spacing=8, tight=True),
         padding=15,
         border_radius=15,
-        bgcolor="#FFFFFF",
+        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         border=ft.Border(ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700")),
         shadow=ft.BoxShadow(blur_radius=5, color="#333333")
     )
