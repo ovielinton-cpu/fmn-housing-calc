@@ -293,11 +293,11 @@ async def build_ui(page: ft.Page):
     form_container = ft.Container(
         content=ft.Column(
             controls=[org_input, salary_input, increment_label_input, increment_input, rate_input, calc_btn],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15, tight=True
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=30, tight=True
         ),
         padding=20,
         border_radius=15,
-        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.BLACK),
+        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.20, ft.Colors.BLACK))
     )
 
@@ -305,7 +305,7 @@ async def build_ui(page: ft.Page):
         content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_increment, result_total], spacing=8, tight=True),
         padding=15,
         border_radius=15,
-        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.BLACK),
+        bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         border=ft.Border(ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700")),
         shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK))
     )
