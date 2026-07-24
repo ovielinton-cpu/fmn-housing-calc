@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Activation Code Generator</title>
+<style>
+  body {
+    font-family: -apple-system, Roboto, Arial, sans-serif;
+    background: linear-gradient(180deg, #4B0082, #E6E6FA);
+    min-height: 100vh;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    padding: 30px 16px;
+  }
+  .card {
+    background: #F5F5F0;
+    border-radius: 15px;
+    padding: 24px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  h1 {
+    color: #4B0082;
+    font-size: 20px;
+    margin-top: 0;
+  }
+  label {
+    display: block;
+    color: #4B0082;
+    font-weight: bold;
+    margin-bottom: 6px;
+    margin-top: 16px;
+  }
+  input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px;
+    border: 2px solid #4B0082;
+    border-radius: 8px;
+    font-size: 16px;
+    color: #4B0082;
+    font-weight: bold;
+  }
+  button {
+    width: 100%;
+    margin-top: 16px;
+    padding: 14px;
+    border: none;
+    border-radius: 30px;
+    background: #FFD700;
+    color: #4B0082;
+    font-weight: bold;
+    font-size: 16px;
+  }
+  .result {
+    margin-top: 20px;
+    padding: 16px;
+    background: #FFFFFF;
+    border: 2px solid #FFD700;
+    border-radius: 10px;
+    text-align: center;
+    display: none;
+  }
+  .result .code {
+    font-size: 24px;
+    font-weight: bold;
+    color: #4B0082;
+    letter-spacing: 2px;
+    word-break: break-all;
+  }
+  .copy-btn {
+    margin-top: 10px;
+    background: #4B0082;
+    color: white;
+    padding: 10px;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Housing-Salary Calc — Activation Code Generator</h1>
+    <label for="chunk1">Chunk 1 (any letters/numbers, e.g. a customer's initials + a number)</label>
+    <input type="text" id="chunk1" placeholder="e.g. JOHN01" maxlength="20">
+    <button onclick="randomChunk1()">Fill Random Chunk</button>
+    <button onclick="generateCode()">Generate Activation Code</button>
+
+    <div class="result" id="resultBox">
+      <div>Give this code to the customer:</div>
+      <div class="code" id="codeOutput"></div>
+      <button class="copy-btn" onclick="copyCode()">Copy Code</button>
+    </div>
+  </div>
+
+<script>
+const SECRET_WORD = "BadSeniorMan";
+
+function randomChunk1() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let out = "";
+  for (let i = 0; i < 6; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  document.getElementById("chunk1").value = out;
+}
+
+async function sha256Hex(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function generateCode() {
+  let chunk1 = document.getElementById("chunk1").value.trim().toUpperCase();
+  if (!chunk1) {
+    alert("Please enter or generate a Chunk 1 first.");
+    return;
+  }
+  const hash = await sha256Hex(chunk1 + SECRET_WORD);
+  const chunk2 = hash.substring(0, 8).toUpperCase();
+  const fullCode = chunk1 + "-" + chunk2;
+  document.getElementById("codeOutput").textContent = fullCode;
+  document.getElementById("resultBox").style.display = "block";
+}
+
+function copyCode() {
+  const text = document.getElementById("codeOutput").textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    alert("Copied: " + text);
+  });
+}
+</script>
+</body>
+</html>
