@@ -1,5 +1,6 @@
 import flet as ft
 import flet_ads as fta
+import hashlib
 
 async def build_ui(page: ft.Page):
     page.title = "Housing-Salary Calc"
@@ -79,9 +80,82 @@ async def build_ui(page: ft.Page):
     async def close_terms(e):
         await page.shared_preferences.set("terms_accepted", True)
         page.pop_dialog()
-        existing_name = await page.shared_preferences.get("user_name")
-        if not existing_name:
-            open_name_dialog()
+        await check_activation()
+
+    # --- ACTIVATION CODE SYSTEM ---
+    SECRET_WORD = "BadSeniorMan"
+
+    def expected_chunk2(chunk1: str) -> str:
+        digest = hashlib.sha256((chunk1.upper() + SECRET_WORD).encode()).hexdigest()
+        return digest[:8].upper()
+
+    def is_valid_code(code: str) -> bool:
+        code = code.strip().upper().replace(" ", "")
+        if "-" not in code:
+            return False
+        parts = code.split("-")
+        if len(parts) != 2:
+            return False
+        chunk1, chunk2 = parts
+        return expected_chunk2(chunk1) == chunk2
+
+    async def check_activation():
+        try:
+            activated = await page.shared_preferences.get("activated")
+        except Exception:
+            activated = False
+
+        if activated:
+            existing_name = await page.shared_preferences.get("user_name")
+            if not existing_name:
+                open_name_dialog()
+            return
+
+        error_text = ft.Text("", color="red", size=13)
+
+        async def on_activate_click(e):
+            if is_valid_code(code_field.value or ""):
+                await page.shared_preferences.set("activated", True)
+                page.pop_dialog()
+                existing_name = await page.shared_preferences.get("user_name")
+                if not existing_name:
+                    open_name_dialog()
+            else:
+                error_text.value = "Invalid code. Please check and try again."
+                page.update()
+
+        code_field = ft.TextField(
+            label="Activation Code",
+            autofocus=True,
+            bgcolor="#FFFFFF",
+            color=PURPLE_TEXT,
+            label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+        )
+
+        activation_dialog = ft.AlertDialog(
+            modal=True,
+            bgcolor="#FFFFFF",
+            title=ft.Text("Activate App", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text(
+                            "This app requires an activation code. Please enter the code you received after payment.",
+                            color=DARK_TEXT, size=14
+                        ),
+                        code_field,
+                        error_text,
+                    ],
+                    tight=True,
+                    spacing=12,
+                ),
+                width=300,
+                padding=10,
+            ),
+            actions=[ft.TextButton("Activate", on_click=on_activate_click, style=ft.ButtonStyle(color=PURPLE_TEXT))],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        page.show_dialog(activation_dialog)
 
     terms_content = ft.Column(
         [
@@ -392,9 +466,7 @@ async def build_ui(page: ft.Page):
     if not terms_already_accepted:
         page.show_dialog(terms_dialog)
     else:
-        existing_name = await page.shared_preferences.get("user_name")
-        if not existing_name:
-            open_name_dialog()
+        await check_activation()
 
 async def main(page: ft.Page):
     try:
