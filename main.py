@@ -1,5 +1,4 @@
 import flet as ft
-import flet_ads as fta
 import hashlib
 
 async def build_ui(page: ft.Page):
@@ -10,11 +9,6 @@ async def build_ui(page: ft.Page):
 
     DARK_TEXT = "#222222"
     PURPLE_TEXT = "#4B0082"
-
-    BANNER_AD_UNIT_ID = {
-        ft.PagePlatform.ANDROID: "ca-app-pub-3940256099942544/6300978111",
-        ft.PagePlatform.IOS: "ca-app-pub-3940256099942544/2934735716",
-    }
 
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
 
@@ -391,33 +385,9 @@ async def build_ui(page: ft.Page):
         shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK))
     )
 
-    banner_ad_slot = ft.Container(
-        height=50,
-        alignment=ft.Alignment(0, 0),
-        content=ft.Text("Loading ad...", color="white", size=12) if page.platform in (ft.PagePlatform.ANDROID, ft.PagePlatform.IOS) else None
-    )
-
-    def load_banner_ad():
-        if page.platform in (ft.PagePlatform.ANDROID, ft.PagePlatform.IOS):
-            def on_ad_error(e):
-                banner_ad_slot.content = ft.Text(f"Ad failed to load: {e.data}", color="white", size=11)
-                page.update()
-
-            def on_ad_load(e):
-                page.update()
-
-            banner_ad_slot.content = fta.BannerAd(
-                unit_id=BANNER_AD_UNIT_ID.get(page.platform, BANNER_AD_UNIT_ID[ft.PagePlatform.ANDROID]),
-                width=320,
-                height=50,
-                on_load=on_ad_load,
-                on_error=on_ad_error,
-            )
-            page.update()
-
     content_wrapper = ft.Container(
         content=ft.Column(
-            controls=[header_container, greeting_row, form_container, ft.Container(height=10), results_container, ft.Container(height=10), banner_ad_slot],
+            controls=[header_container, greeting_row, form_container, ft.Container(height=10), results_container],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=5,
         ),
@@ -456,7 +426,6 @@ async def build_ui(page: ft.Page):
     )
 
     page.add(view_container)
-    load_banner_ad()
 
     try:
         terms_already_accepted = await page.shared_preferences.get("terms_accepted")
