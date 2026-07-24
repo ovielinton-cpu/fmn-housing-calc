@@ -23,9 +23,7 @@ jobs:
         run: rm -rf build
 
       - name: Build APK
-        run: >
-          flet build apk --yes
-          --android-meta-data com.google.android.gms.ads.APPLICATION_ID="ca-app-pub-3940256099942544~3347511713"
+        run: flet build apk --yes
         env:
           FLET_CLI_NO_RICH_OUTPUT: 1
 
