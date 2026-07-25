@@ -144,9 +144,33 @@ async function generateCode() {
 
 function copyCode() {
   const text = document.getElementById("codeOutput").textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    alert("Copied: " + text);
-  });
+
+  function fallbackCopy() {
+    const tempInput = document.createElement("textarea");
+    tempInput.value = text;
+    tempInput.style.position = "fixed";
+    tempInput.style.opacity = "0";
+    document.body.appendChild(tempInput);
+    tempInput.focus();
+    tempInput.select();
+    try {
+      document.execCommand("copy");
+      alert("Copied: " + text);
+    } catch (err) {
+      alert("Could not copy automatically. Please select and copy manually:\n\n" + text);
+    }
+    document.body.removeChild(tempInput);
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      alert("Copied: " + text);
+    }).catch(() => {
+      fallbackCopy();
+    });
+  } else {
+    fallbackCopy();
+  }
 }
 </script>
 </body>
