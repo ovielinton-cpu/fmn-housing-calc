@@ -27,6 +27,10 @@
     font-size: 20px;
     margin-top: 0;
   }
+  p.note {
+    color: #444;
+    font-size: 13px;
+  }
   label {
     display: block;
     color: #4B0082;
@@ -82,7 +86,12 @@
 <body>
   <div class="card">
     <h1>Housing-Salary Calc — Activation Code Generator</h1>
-    <label for="chunk1">Chunk 1 (any letters/numbers, e.g. a customer's initials + a number)</label>
+    <p class="note">Codes are locked to one specific phone. You need the customer's Device ID (shown on their Activation screen) before you can generate their code.</p>
+
+    <label for="deviceId">Customer's Device ID (from their phone's Activation screen)</label>
+    <input type="text" id="deviceId" placeholder="e.g. 7K9X2QRT" maxlength="20">
+
+    <label for="chunk1">Chunk 1 (any letters/numbers you choose, e.g. customer's initials)</label>
     <input type="text" id="chunk1" placeholder="e.g. JOHN01" maxlength="20">
     <button onclick="randomChunk1()">Fill Random Chunk</button>
     <button onclick="generateCode()">Generate Activation Code</button>
@@ -115,11 +124,18 @@ async function sha256Hex(message) {
 
 async function generateCode() {
   let chunk1 = document.getElementById("chunk1").value.trim().toUpperCase();
+  let deviceId = document.getElementById("deviceId").value.trim().toUpperCase();
+
+  if (!deviceId) {
+    alert("Please enter the customer's Device ID first (shown on their Activation screen).");
+    return;
+  }
   if (!chunk1) {
     alert("Please enter or generate a Chunk 1 first.");
     return;
   }
-  const hash = await sha256Hex(chunk1 + SECRET_WORD);
+
+  const hash = await sha256Hex(chunk1 + deviceId + SECRET_WORD);
   const chunk2 = hash.substring(0, 8).toUpperCase();
   const fullCode = chunk1 + "-" + chunk2;
   document.getElementById("codeOutput").textContent = fullCode;
