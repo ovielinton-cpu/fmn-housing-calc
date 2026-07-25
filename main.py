@@ -151,23 +151,6 @@ async def build_ui(page: ft.Page):
         )
         page.show_dialog(activation_dialog)
 
-    terms_content = ft.Column(
-        [
-            ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
-            ft.Text(
-                "1. Purpose: This application is provided as a general tool to help staff of any organization estimate their housing upfront payments, based on figures and rates you enter yourself.\n\n"
-                "2. Accuracy: All calculations are estimates based on the information you provide. These figures should be verified against your own organization's official payroll policy.\n\n"
-                "3. Disclaimer: The developer is not responsible for any financial decisions made based on these calculations. Please consult with your HR department for official confirmation.\n\n"
-                "4. Privacy: No personal data or salary information is stored, transmitted, or shared externally by this application. Everything you enter stays on your device.",
-                color=DARK_TEXT,
-                size=14
-            ),
-        ],
-        scroll=ft.ScrollMode.AUTO,
-        height=300,
-        spacing=10
-    )
-
     def decline_terms(e):
         page.pop_dialog()
         page.controls.clear()
@@ -192,16 +175,59 @@ async def build_ui(page: ft.Page):
         )
         page.update()
 
+    scroll_hint = ft.Text(
+        "⬇ Please scroll down to read the full agreement before continuing.",
+        color="#FF3B30", size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER
+    )
+
+    agree_btn = ft.ElevatedButton(
+        content=ft.Container(
+            content=ft.Text("I Agree", weight=ft.FontWeight.BOLD, size=16, color="white"),
+            padding=ft.Padding(left=10, right=10, top=6, bottom=6),
+        ),
+        on_click=close_terms,
+        style=ft.ButtonStyle(bgcolor="#2E8B57"),
+        width=280,
+    )
+    disagree_btn = ft.OutlinedButton(
+        content=ft.Text("I Don't Agree", weight=ft.FontWeight.W_400, size=13, color="#C62828"),
+        on_click=decline_terms,
+        style=ft.ButtonStyle(side=ft.BorderSide(1, "#C62828")),
+        width=280,
+    )
+
+    def on_terms_scroll(e):
+        # e.pixels is current scroll position, e.max_scroll_extent is how far it can scroll
+        if e.pixels >= (e.max_scroll_extent - 15):
+            terms_dialog.actions = [
+                ft.Column([agree_btn, disagree_btn], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            ]
+            page.update()
+
+    terms_listview = ft.ListView(
+        controls=[
+            ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
+            ft.Text(
+                "1. Purpose: This application is provided as a general tool to help staff of any organization estimate their housing upfront payments, based on figures and rates you enter yourself.\n\n"
+                "2. Accuracy: All calculations are estimates based on the information you provide. These figures should be verified against your own organization's official payroll policy.\n\n"
+                "3. Disclaimer: The developer is not responsible for any financial decisions made based on these calculations. Please consult with your HR department for official confirmation.\n\n"
+                "4. Privacy: No personal data or salary information is stored, transmitted, or shared externally by this application. Everything you enter stays on your device.",
+                color=DARK_TEXT,
+                size=14
+            ),
+        ],
+        height=300,
+        spacing=10,
+        on_scroll=on_terms_scroll,
+    )
+
     terms_dialog = ft.AlertDialog(
         modal=True,
         bgcolor="#FFFFFF",
         title=ft.Text("Welcome & Agreement", weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
-        content=ft.Container(content=terms_content, width=320, height=350),
-        actions=[
-            ft.TextButton("I Agree", on_click=close_terms, style=ft.ButtonStyle(color=PURPLE_TEXT)),
-            ft.TextButton("I Don't Agree", on_click=decline_terms, style=ft.ButtonStyle(color="red")),
-        ],
-        actions_alignment=ft.MainAxisAlignment.END,
+        content=ft.Container(content=terms_listview, width=320, height=350),
+        actions=[scroll_hint],
+        actions_alignment=ft.MainAxisAlignment.CENTER,
     )
 
     logo_image = ft.Image(
