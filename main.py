@@ -1,7 +1,7 @@
 import flet as ft
-import hashlib
-import random
-import string
+import flet_ads as fta
+import json
+import datetime
 
 async def build_ui(page: ft.Page):
     page.title = "Housing-Salary Calc"
@@ -11,112 +11,43 @@ async def build_ui(page: ft.Page):
 
     DARK_TEXT = "#222222"
     PURPLE_TEXT = "#4B0082"
-    SECRET_WORD = "BadSeniorMan"
+
+    BANNER_AD_UNIT_ID = {
+        ft.PagePlatform.ANDROID: "ca-app-pub-3940256099942544/6300978111",
+        ft.PagePlatform.IOS: "ca-app-pub-3940256099942544/2934735716",
+    }
 
     # ==================================================================
-    # ACTIVATION CODE SYSTEM (device-bound)
+    # NIGERIA PAYE TAX (Nigeria Tax Act 2025, effective 1 Jan 2026)
     # ==================================================================
-    async def get_or_create_device_id():
-        try:
-            device_id = await page.shared_preferences.get("device_id")
-        except Exception:
-            device_id = None
-        if not device_id:
-            device_id = "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
-            await page.shared_preferences.set("device_id", device_id)
-        return device_id
-
-    def expected_chunk2(chunk1: str, device_id: str) -> str:
-        digest = hashlib.sha256((chunk1.upper() + device_id.upper() + SECRET_WORD).encode()).hexdigest()
-        return digest[:8].upper()
-
-    def is_valid_code(code: str, device_id: str) -> bool:
-        code = code.strip().upper().replace(" ", "")
-        if "-" not in code:
-            return False
-        parts = code.split("-")
-        if len(parts) != 2:
-            return False
-        chunk1, chunk2 = parts
-        return expected_chunk2(chunk1, device_id) == chunk2
-
-    async def show_activation_screen():
-        device_id = await get_or_create_device_id()
-        error_text = ft.Text("", color="yellow", size=13, text_align=ft.TextAlign.CENTER)
-        code_field = ft.TextField(
-            label="Activation Code",
-            autofocus=True,
-            bgcolor="#FFFFFF",
-            color=PURPLE_TEXT,
-            label_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        )
-
-        async def on_activate_click(e):
-            if is_valid_code(code_field.value or "", device_id):
-                await page.shared_preferences.set("activated", True)
-                await build_main_app()
-            else:
-                error_text.value = "Invalid code. Please check and try again."
-                page.update()
-
-        page.controls.clear()
-        page.bgcolor = "#4B0082"
-        page.add(
-            ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Text("Activate App", size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER),
-                        ft.Text(
-                            "This app requires an activation code. Send the Device ID below to the seller after payment, and enter the code they give you.",
-                            size=14, color="white", text_align=ft.TextAlign.CENTER
-                        ),
-                        ft.Container(
-                            content=ft.Text(f"Device ID: {device_id}", size=16, weight=ft.FontWeight.BOLD, color=PURPLE_TEXT, selectable=True, text_align=ft.TextAlign.CENTER),
-                            bgcolor="#FFFFFF",
-                            padding=14,
-                            border_radius=10,
-                            width=300,
-                        ),
-                        code_field,
-                        error_text,
-                        ft.ElevatedButton(
-                            content=ft.Container(
-                                content=ft.Text("Activate", weight=ft.FontWeight.BOLD, size=16, color="white"),
-                                padding=ft.Padding(left=10, right=10, top=6, bottom=6),
-                            ),
-                            on_click=on_activate_click,
-                            style=ft.ButtonStyle(bgcolor="#2E8B57"),
-                            width=280,
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=16,
-                    scroll=ft.ScrollMode.AUTO,
-                ),
-                padding=30,
-                alignment=ft.Alignment(0, 0),
-                expand=True,
-            )
-        )
-        page.update()
-
-    async def check_activation():
-        try:
-            activated = await page.shared_preferences.get("activated")
-        except Exception:
-            activated = False
-
-        if activated:
-            await build_main_app()
-        else:
-            await show_activation_screen()
+    def compute_paye_annual(taxable_annual: float) -> float:
+        bands = [
+            (800_000, 0.00),
+            (3_000_000, 0.15),
+            (12_000_000, 0.18),
+            (25_000_000, 0.21),
+            (50_000_000, 0.23),
+            (float("inf"), 0.25),
+        ]
+        tax = 0.0
+        lower = 0.0
+        remaining = max(taxable_annual, 0.0)
+        for upper, rate in bands:
+            band_size = upper - lower
+            if remaining <= 0:
+                break
+            taxed_in_band = min(remaining, band_size)
+            tax += taxed_in_band * rate
+            remaining -= taxed_in_band
+            lower = upper
+        return tax
 
     # ==================================================================
-    # TERMS AND CONDITIONS (full-page, scroll-gated, not a dismissible dialog)
+    # TERMS AND CONDITIONS (full-page, scroll-gated)
     # ==================================================================
     async def close_terms(e=None):
         await page.shared_preferences.set("terms_accepted", True)
-        await check_activation()
+        await check_name()
 
     def decline_terms(e=None):
         page.controls.clear()
@@ -176,10 +107,10 @@ async def build_ui(page: ft.Page):
             controls=[
                 ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
                 ft.Text(
-                    "1. Purpose: This application is provided as a general tool to help staff of any organization estimate their housing upfront payments, based on figures and rates you enter yourself.\n\n"
-                    "2. Accuracy: All calculations are estimates based on the information you provide. These figures should be verified against your own organization's official payroll policy.\n\n"
-                    "3. Disclaimer: The developer is not responsible for any financial decisions made based on these calculations. Please consult with your HR department for official confirmation.\n\n"
-                    "4. Privacy: No personal data or salary information is stored, transmitted, or shared externally by this application. Everything you enter stays on your device.",
+                    "1. Purpose: This application is provided as a general tool to help staff of any organization estimate their housing upfront payments and salary breakdowns, based on figures you enter yourself.\n\n"
+                    "2. Accuracy: All calculations, including PAYE tax estimates, are based on the Nigeria Tax Act 2025 as understood at the time of writing and are for guidance only. Verify against your organization's official payroll policy and current tax law.\n\n"
+                    "3. Disclaimer: The developer is not responsible for any financial or tax decisions made based on these calculations. Please consult your HR department or a tax professional for official confirmation.\n\n"
+                    "4. Privacy: No personal data or salary information is transmitted or shared externally by this application. Everything you enter and save stays on your device.",
                     color=DARK_TEXT,
                     size=14
                 ),
@@ -217,7 +148,7 @@ async def build_ui(page: ft.Page):
         page.update()
 
     # ==================================================================
-    # NAME PROMPT (low-stakes, kept as a dialog)
+    # NAME PROMPT
     # ==================================================================
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
 
@@ -262,8 +193,27 @@ async def build_ui(page: ft.Page):
         )
         page.show_dialog(name_dialog)
 
+    async def check_name():
+        existing_name = await page.shared_preferences.get("user_name")
+        if not existing_name:
+            open_name_dialog()
+        await build_main_app()
+
     # ==================================================================
-    # MAIN CALCULATOR APP
+    # SHARED UI HELPER
+    # ==================================================================
+    def field_with_caption(caption_text, field):
+        return ft.Column(
+            [
+                ft.Text(caption_text, color="#FF3B30", weight=ft.FontWeight.BOLD, size=12),
+                field,
+            ],
+            spacing=2,
+            tight=True,
+        )
+
+    # ==================================================================
+    # MAIN APP (Housing Upfront tab + Salary Management tab)
     # ==================================================================
     async def build_main_app():
         change_btn = ft.ElevatedButton(
@@ -284,19 +234,11 @@ async def build_ui(page: ft.Page):
             padding=ft.Padding(left=12, right=12, top=8, bottom=8),
         )
 
-        logo_image = ft.Image(
-            src="logo.png",
-            width=90,
-            height=90,
-            fit=ft.BoxFit.CONTAIN
-        )
+        logo_image = ft.Image(src="logo.png", width=90, height=90, fit=ft.BoxFit.CONTAIN)
 
         header_text = ft.Container(
             content=ft.Text(
-                "Housing-Salary Calc",
-                size=22,
-                weight=ft.FontWeight.BOLD,
-                color="white",
+                "Housing-Salary Calc", size=22, weight=ft.FontWeight.BOLD, color="white",
                 text_align=ft.TextAlign.CENTER
             ),
             bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
@@ -328,6 +270,7 @@ async def build_ui(page: ft.Page):
             except Exception:
                 return default
 
+        # -------------------- HOUSING UPFRONT TAB --------------------
         last_org = await load_saved("last_org", "")
         last_salary = await load_saved("last_salary", "")
         last_increment_label = await load_saved("last_increment_label", "Salary Increment")
@@ -350,63 +293,28 @@ async def build_ui(page: ft.Page):
             await page.shared_preferences.set("last_rate_pct", rate_input.value)
 
         org_input = ft.TextField(
-            value=last_org,
-            bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT,
-            color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_change=on_org_change
+            value=last_org, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=on_org_change
         )
-
         salary_input = ft.TextField(
-            value=last_salary,
-            keyboard_type=ft.KeyboardType.NUMBER,
-            bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT,
-            color=PURPLE_TEXT,
-            hint_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_change=on_salary_change
+            value=last_salary, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=on_salary_change
         )
-
         increment_label_input = ft.TextField(
-            value=last_increment_label,
-            bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT,
-            color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_change=on_increment_label_change
+            value=last_increment_label, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=on_increment_label_change
         )
-
         increment_input = ft.TextField(
-            value=last_increment_pct,
-            keyboard_type=ft.KeyboardType.NUMBER,
-            bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT,
-            color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_change=on_increment_change
+            value=last_increment_pct, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=on_increment_change
         )
-
         rate_input = ft.TextField(
-            value=last_rate_pct,
-            keyboard_type=ft.KeyboardType.NUMBER,
-            bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT,
-            color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_change=on_rate_change
+            value=last_rate_pct, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=on_rate_change
         )
-
-        def field_with_caption(caption_text, field):
-            return ft.Column(
-                [
-                    ft.Text(caption_text, color="#FF3B30", weight=ft.FontWeight.BOLD, size=12),
-                    field,
-                ],
-                spacing=2,
-                tight=True,
-            )
 
         result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
         result_basic = ft.Text(spans=[ft.TextSpan("New Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
@@ -430,7 +338,6 @@ async def build_ui(page: ft.Page):
                 result_increment.spans[0].text = f"{increment_name} Addition: "
                 result_increment.spans[1].text = f"₦{increment_amount:,.2f}"
                 result_total.spans[1].text = f"₦{annual_salary:,.2f}"
-
                 page.update()
             except ValueError:
                 result_upfront.spans[1].text = "Invalid Input"
@@ -438,7 +345,7 @@ async def build_ui(page: ft.Page):
 
         calc_btn = ft.ElevatedButton("Calculate Upfront", on_click=on_calculate_click, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082", text_style=ft.TextStyle(weight=ft.FontWeight.BOLD)))
 
-        form_container = ft.Container(
+        housing_form = ft.Container(
             content=ft.Column(
                 controls=[
                     field_with_caption("Company / Organization Name (optional)", org_input),
@@ -450,107 +357,53 @@ async def build_ui(page: ft.Page):
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=30, tight=True
             ),
-            padding=20,
-            border_radius=15,
+            padding=20, border_radius=15,
             bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
             shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.20, ft.Colors.BLACK))
         )
 
-        results_container = ft.Container(
+        housing_results = ft.Container(
             content=ft.Column([result_upfront, ft.Divider(height=1, color="#4B0082"), result_basic, result_increment, result_total], spacing=8, tight=True),
-            padding=15,
-            border_radius=15,
+            padding=15, border_radius=15,
             bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
             border=ft.Border(ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700")),
             shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK))
         )
 
-        content_wrapper = ft.Container(
-            content=ft.Column(
-                controls=[header_container, greeting_row, form_container, ft.Container(height=10), results_container],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=5,
-            ),
-            width=400,
-            alignment=ft.Alignment(0, -1),
-        )
-
-        main_content = ft.Column(
-            controls=[content_wrapper],
+        housing_tab_content = ft.Column(
+            controls=[housing_form, ft.Container(height=10), housing_results],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            expand=True,
-            scroll=ft.ScrollMode.AUTO,
+            spacing=10,
         )
 
-        view_container = ft.Stack(
-            controls=[
-                ft.Image(
-                    src="background.png",
-                    fit=ft.BoxFit.COVER,
-                    left=0,
-                    top=0,
-                    right=0,
-                    bottom=0,
-                ),
-                ft.Container(
-                    content=main_content,
-                    alignment=ft.Alignment(0, -1),
-                    padding=10,
-                    left=0,
-                    top=0,
-                    right=0,
-                    bottom=0,
-                ),
-            ],
-            expand=True
-        )
+        # -------------------- SALARY MANAGEMENT TAB --------------------
+        sm_last_basic = await load_saved("sm_basic", "")
+        sm_last_housing = await load_saved("sm_housing", "")
+        sm_last_transport = await load_saved("sm_transport", "")
+        sm_last_other = await load_saved("sm_other", "")
+        sm_last_rent = await load_saved("sm_rent", "")
 
-        page.controls.clear()
-        page.add(view_container)
-        page.update()
+        async def sm_on_basic_change(e):
+            await page.shared_preferences.set("sm_basic", sm_basic_input.value)
 
-        existing_name = await page.shared_preferences.get("user_name")
-        if not existing_name:
-            open_name_dialog()
+        async def sm_on_housing_change(e):
+            await page.shared_preferences.set("sm_housing", sm_housing_input.value)
 
-    # ==================================================================
-    # STARTUP FLOW
-    # ==================================================================
-    try:
-        terms_already_accepted = await page.shared_preferences.get("terms_accepted")
-    except Exception:
-        terms_already_accepted = False
+        async def sm_on_transport_change(e):
+            await page.shared_preferences.set("sm_transport", sm_transport_input.value)
 
-    if not terms_already_accepted:
-        show_terms_screen()
-    else:
-        await check_activation()
+        async def sm_on_other_change(e):
+            await page.shared_preferences.set("sm_other", sm_other_input.value)
 
+        async def sm_on_rent_change(e):
+            await page.shared_preferences.set("sm_rent", sm_rent_input.value)
 
-async def main(page: ft.Page):
-    try:
-        await build_ui(page)
-    except Exception as ex:
-        import traceback
-        page.controls.clear()
-        page.bgcolor = "#4B0082"
-        page.add(
-            ft.Container(
-                content=ft.Column(
-                    [
-                        ft.Text("Startup Error", size=20, weight=ft.FontWeight.BOLD, color="white"),
-                        ft.Text(str(ex), size=14, color="yellow", selectable=True),
-                        ft.Divider(color="white"),
-                        ft.Text(traceback.format_exc(), size=10, color="white", selectable=True),
-                    ],
-                    scroll=ft.ScrollMode.AUTO,
-                    expand=True,
-                ),
-                padding=20,
-                expand=True,
-            )
-        )
-        page.update()
+        sm_basic_input = ft.TextField(value=sm_last_basic, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=sm_on_basic_change)
+        sm_housing_input = ft.TextField(value=sm_last_housing, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=sm_on_housing_change)
+        sm_transport_input = ft.TextField(value=sm_last_transport, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=sm_on_transport_change)
+        sm_other_input = ft.TextField(value=sm_last_other, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=sm_on_other_change)
+        sm_rent_input = ft.TextField(value=sm_last_rent, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), on_change=sm_on_rent_change)
 
-if __name__ == "__main__":
-    ft.run(main)
+        sm_result_gross = ft.Text(spans=[ft.TextSpan("Gross Pay (Monthly): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=16)
+        sm_result_pension = ft.Text(spans=[ft.TextSpan("Pension (8%): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+        sm_result_nhf = ft.Text(spans=[ft.TextSpan("NHF (2.5%): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green",
