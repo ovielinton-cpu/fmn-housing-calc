@@ -794,8 +794,7 @@ async def build_ui(page: ft.Page):
         # ---------- BUILD TABS ----------
         tabs = ft.Tabs(
             selected_index=0,
-            tabs=[
-                # FIX: use positional arguments: Tab(label, content)
+            controls=[  # FIX: use 'controls' instead of 'tabs'
                 ft.Tab(
                     "Housing Upfront",
                     ft.Container(content=housing_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))
