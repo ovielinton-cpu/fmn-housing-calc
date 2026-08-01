@@ -406,41 +406,73 @@ async def build_ui(page: ft.Page):
         )
 
         # -------------------- SALARY MANAGEMENT TAB --------------------
-        sm_last_basic = await load_saved("sm_basic", "")
-        sm_last_housing = await load_saved("sm_housing", "")
-        sm_last_transport = await load_saved("sm_transport", "")
-        sm_last_other = await load_saved("sm_other", "")
-        sm_last_rent = await load_saved("sm_rent", "")
+sm_last_basic = await load_saved("sm_basic", "")
+sm_last_housing = await load_saved("sm_housing", "")
+sm_last_transport = await load_saved("sm_transport", "")
+sm_last_other = await load_saved("sm_other", "")
+sm_last_rent = await load_saved("sm_rent", "")
 
-        async def sm_on_basic_change(e):
-            await page.shared_preferences.set("sm_basic", sm_basic_input.value)
+async def sm_on_basic_change(e):
+    await page.shared_preferences.set("sm_basic", sm_basic_input.value)
 
-        async def sm_on_housing_change(e):
-            await page.shared_preferences.set("sm_housing", sm_housing_input.value)
+async def sm_on_housing_change(e):
+    await page.shared_preferences.set("sm_housing", sm_housing_input.value)
 
-        async def sm_on_transport_change(e):
-            await page.shared_preferences.set("sm_transport", sm_transport_input.value)
+async def sm_on_transport_change(e):
+    await page.shared_preferences.set("sm_transport", sm_transport_input.value)
 
-        async def sm_on_other_change(e):
-            await page.shared_preferences.set("sm_other", sm_other_input.value)
+async def sm_on_other_change(e):
+    await page.shared_preferences.set("sm_other", sm_other_input.value)
 
-        async def sm_on_rent_change(e):
-            await page.shared_preferences.set("sm_rent", sm_rent_input.value)
+async def sm_on_rent_change(e):
+    await page.shared_preferences.set("sm_rent", sm_rent_input.value)
 
-        sm_basic_input = ft.TextField(
-            value=sm_last_basic, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT, color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_change=sm_on_basic_change
-        )
-        sm_housing_input = ft.TextField(
-            value=sm_last_housing, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT, color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_change=sm_on_housing_change
-        )
-        sm_transport_input = ft.TextField(
-            value=sm_last_transport, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
-            border_color=PURPLE_TEXT, color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            on_chan
+sm_basic_input = ft.TextField(
+    value=sm_last_basic,
+    keyboard_type=ft.KeyboardType.NUMBER,
+    bgcolor="#FFFFFF",
+    border_color=PURPLE_TEXT,
+    color=PURPLE_TEXT,
+    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+    on_change=sm_on_basic_change
+)
+
+sm_housing_input = ft.TextField(
+    value=sm_last_housing,
+    keyboard_type=ft.KeyboardType.NUMBER,
+    bgcolor="#FFFFFF",
+    border_color=PURPLE_TEXT,
+    color=PURPLE_TEXT,
+    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+    on_change=sm_on_housing_change
+)
+
+sm_transport_input = ft.TextField(
+    value=sm_last_transport,
+    keyboard_type=ft.KeyboardType.NUMBER,
+    bgcolor="#FFFFFF",
+    border_color=PURPLE_TEXT,
+    color=PURPLE_TEXT,
+    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+    on_change=sm_on_transport_change
+)
+
+sm_other_input = ft.TextField(
+    value=sm_last_other,
+    keyboard_type=ft.KeyboardType.NUMBER,
+    bgcolor="#FFFFFF",
+    border_color=PURPLE_TEXT,
+    color=PURPLE_TEXT,
+    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+    on_change=sm_on_other_change
+)
+
+sm_rent_input = ft.TextField(
+    value=sm_last_rent,
+    keyboard_type=ft.KeyboardType.NUMBER,
+    bgcolor="#FFFFFF",
+    border_color=PURPLE_TEXT,
+    color=PURPLE_TEXT,
+    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+    on_change=sm_on_rent_change
+)
