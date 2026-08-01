@@ -1001,14 +1001,43 @@ async def build_ui(page: ft.Page):
             spacing=10,
         )
 
-        # -------------------- TABS --------------------
-        tabs = ft.Tabs(
-            selected_index=0,
-            tabs=[
-                ft.Tab(text="Housing Upfront", content=ft.Container(content=housing_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
-                ft.Tab(text="Salary Management", content=ft.Container(content=salary_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
-                ft.Tab(text="Money Tracker", content=ft.Container(content=money_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
-            ],
+        # -------------------- TABS (manual, button-based) --------------------
+        tab_labels = ["Housing Upfront", "Salary Management", "Money Tracker"]
+        tab_panels = [
+            ft.Container(content=housing_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0), visible=True),
+            ft.Container(content=salary_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0), visible=False),
+            ft.Container(content=money_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0), visible=False),
+        ]
+        tab_buttons = []
+
+        def select_tab(idx):
+            def handler(e):
+                for i, panel in enumerate(tab_panels):
+                    panel.visible = (i == idx)
+                for i, btn in enumerate(tab_buttons):
+                    is_selected = (i == idx)
+                    btn.style = ft.ButtonStyle(
+                        bgcolor="#FFD700" if is_selected else ft.Colors.with_opacity(0.3, ft.Colors.WHITE),
+                    )
+                    btn.content.color = "#4B0082" if is_selected else "white"
+                page.update()
+            return handler
+
+        for i, label in enumerate(tab_labels):
+            tab_buttons.append(
+                ft.ElevatedButton(
+                    content=ft.Text(label, size=12, weight=ft.FontWeight.BOLD, color="#4B0082" if i == 0 else "white"),
+                    style=ft.ButtonStyle(bgcolor="#FFD700" if i == 0 else ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+                )
+            )
+        for i, btn in enumerate(tab_buttons):
+            btn.on_click = select_tab(i)
+
+        tab_bar_row = ft.Row(tab_buttons, alignment=ft.MainAxisAlignment.CENTER, wrap=True, spacing=6)
+
+        tabs = ft.Column(
+            controls=[tab_bar_row] + tab_panels,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
         # -------------------- BANNER AD --------------------
