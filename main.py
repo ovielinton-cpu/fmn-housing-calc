@@ -584,15 +584,15 @@ async def build_ui(page: ft.Page):
             spacing=10,
         )
 
-        # ---------- CUSTOM BAR CHART (fixed Colors) ----------
+        # ---------- CUSTOM BAR CHART ----------
         chart_income_bar = ft.Container(
             height=20,
-            bgcolor=ft.Colors.GREEN,   # fixed
+            bgcolor=ft.Colors.GREEN,
             border_radius=5,
         )
         chart_expense_bar = ft.Container(
             height=20,
-            bgcolor=ft.Colors.RED,     # fixed
+            bgcolor=ft.Colors.RED,
             border_radius=5,
         )
         chart_income_label = ft.Text("Income: ₦0", size=12, color="green")
@@ -775,7 +775,7 @@ async def build_ui(page: ft.Page):
                 tracker_input_row,
                 ft.Divider(height=1, color="#FFD700"),
                 summary_row,
-                chart_container,   # custom chart
+                chart_container,
                 ft.Divider(height=1, color="#FFD700"),
                 ft.Text("Recent Transactions", size=14, weight=ft.FontWeight.BOLD, color="white"),
                 ft.Container(
@@ -795,9 +795,19 @@ async def build_ui(page: ft.Page):
         tabs = ft.Tabs(
             selected_index=0,
             tabs=[
-                ft.Tab("Housing Upfront", content=ft.Container(content=housing_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
-                ft.Tab("Salary Management", content=ft.Container(content=salary_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
-                ft.Tab("Money Tracker", content=ft.Container(content=tracker_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
+                # FIX: use positional arguments: Tab(label, content)
+                ft.Tab(
+                    "Housing Upfront",
+                    ft.Container(content=housing_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))
+                ),
+                ft.Tab(
+                    "Salary Management",
+                    ft.Container(content=salary_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))
+                ),
+                ft.Tab(
+                    "Money Tracker",
+                    ft.Container(content=tracker_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))
+                ),
             ],
             expand=True,
         )
