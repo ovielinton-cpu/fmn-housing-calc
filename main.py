@@ -584,15 +584,15 @@ async def build_ui(page: ft.Page):
             spacing=10,
         )
 
-        # ---------- CUSTOM BAR CHART (works without ft.BarChart) ----------
+        # ---------- CUSTOM BAR CHART (fixed Colors) ----------
         chart_income_bar = ft.Container(
             height=20,
-            bgcolor=ft.colors.GREEN,
+            bgcolor=ft.Colors.GREEN,   # fixed
             border_radius=5,
         )
         chart_expense_bar = ft.Container(
             height=20,
-            bgcolor=ft.colors.RED,
+            bgcolor=ft.Colors.RED,     # fixed
             border_radius=5,
         )
         chart_income_label = ft.Text("Income: ₦0", size=12, color="green")
@@ -656,7 +656,7 @@ async def build_ui(page: ft.Page):
 
             # Update custom chart bars
             max_val = max(total_income, total_expense, 1000)
-            income_width = (total_income / max_val) * 200  # max width ~200px
+            income_width = (total_income / max_val) * 200
             expense_width = (total_expense / max_val) * 200
             chart_income_bar.width = max(income_width, 5)
             chart_expense_bar.width = max(expense_width, 5)
