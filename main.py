@@ -584,22 +584,49 @@ async def build_ui(page: ft.Page):
             spacing=10,
         )
 
-        chart = ft.BarChart(
-            bar_groups=[],
-            left_axis=ft.ChartAxis(
-                labels_size=40,
-                title=ft.Text("Amount (₦)", size=12),
-            ),
-            bottom_axis=ft.ChartAxis(
-                labels=[
-                    ft.ChartAxisLabel(value=0, label=ft.Text("Income", size=12)),
-                    ft.ChartAxisLabel(value=1, label=ft.Text("Expense", size=12)),
-                ],
-                labels_size=40,
-            ),
-            horizontal=False,
-            height=180,
-            expand=True,
+        # ---------- CUSTOM BAR CHART (works without ft.BarChart) ----------
+        chart_income_bar = ft.Container(
+            height=20,
+            bgcolor=ft.colors.GREEN,
+            border_radius=5,
+        )
+        chart_expense_bar = ft.Container(
+            height=20,
+            bgcolor=ft.colors.RED,
+            border_radius=5,
+        )
+        chart_income_label = ft.Text("Income: ₦0", size=12, color="green")
+        chart_expense_label = ft.Text("Expense: ₦0", size=12, color="red")
+
+        chart_row = ft.Row(
+            controls=[
+                ft.Column(
+                    [
+                        chart_income_label,
+                        ft.Row([chart_income_bar], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ],
+                    spacing=5,
+                    expand=True,
+                ),
+                ft.Column(
+                    [
+                        chart_expense_label,
+                        ft.Row([chart_expense_bar], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ],
+                    spacing=5,
+                    expand=True,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_EVENLY,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        chart_container = ft.Container(
+            content=chart_row,
+            padding=10,
+            bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
+            border_radius=10,
+            height=120,
         )
 
         tracker_list = ft.ListView(expand=True, spacing=5, padding=5)
@@ -627,20 +654,16 @@ async def build_ui(page: ft.Page):
             summary_net.value = f"Net: ₦{net:,.2f}"
             summary_net.color = "green" if net >= 0 else "red"
 
-            chart.bar_groups = [
-                ft.BarChartGroup(
-                    x=0,
-                    bars=[ft.BarChartBar(total_income, color=ft.colors.GREEN)],
-                ),
-                ft.BarChartGroup(
-                    x=1,
-                    bars=[ft.BarChartBar(total_expense, color=ft.colors.RED)],
-                ),
-            ]
+            # Update custom chart bars
             max_val = max(total_income, total_expense, 1000)
-            chart.left_axis.interval = max_val / 5
-            chart.left_axis.max = max_val * 1.1
+            income_width = (total_income / max_val) * 200  # max width ~200px
+            expense_width = (total_expense / max_val) * 200
+            chart_income_bar.width = max(income_width, 5)
+            chart_expense_bar.width = max(expense_width, 5)
+            chart_income_label.value = f"Income: ₦{total_income:,.2f}"
+            chart_expense_label.value = f"Expense: ₦{total_expense:,.2f}"
 
+            # Recent transactions (last 15, newest first)
             sorted_trans = sorted(transactions, key=lambda t: t.get("date", ""), reverse=True)
             recent = sorted_trans[:15]
 
@@ -752,13 +775,7 @@ async def build_ui(page: ft.Page):
                 tracker_input_row,
                 ft.Divider(height=1, color="#FFD700"),
                 summary_row,
-                ft.Container(
-                    content=chart,
-                    height=200,
-                    padding=5,
-                    bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
-                    border_radius=10,
-                ),
+                chart_container,   # custom chart
                 ft.Divider(height=1, color="#FFD700"),
                 ft.Text("Recent Transactions", size=14, weight=ft.FontWeight.BOLD, color="white"),
                 ft.Container(
@@ -807,6 +824,5 @@ async def build_ui(page: ft.Page):
         show_error_screen(ex)
 
 
-# Allow the app to run when executed directly
 if __name__ == "__main__":
     ft.app(target=build_ui, view=ft.AppView.WEB_BROWSER)
