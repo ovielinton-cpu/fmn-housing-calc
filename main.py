@@ -1,5 +1,5 @@
 import flet as ft
-import flet_ads as fta   # not used, but kept
+import flet_ads as fta
 import json
 import datetime
 import traceback
@@ -13,15 +13,11 @@ async def build_ui(page: ft.Page):
     DARK_TEXT = "#222222"
     PURPLE_TEXT = "#4B0082"
 
-    # (Ad unit IDs – not used but kept)
     BANNER_AD_UNIT_ID = {
         ft.PagePlatform.ANDROID: "ca-app-pub-3940256099942544/6300978111",
         ft.PagePlatform.IOS: "ca-app-pub-3940256099942544/2934735716",
     }
 
-    # ==================================================================
-    # NIGERIA PAYE TAX (Nigeria Tax Act 2025, effective 1 Jan 2026)
-    # ==================================================================
     def compute_paye_annual(taxable_annual: float) -> float:
         bands = [
             (800_000, 0.00),
@@ -44,9 +40,6 @@ async def build_ui(page: ft.Page):
             lower = upper
         return tax
 
-    # ==================================================================
-    # TERMS AND CONDITIONS (full-page, scroll-gated)
-    # ==================================================================
     async def close_terms(e=None):
         try:
             await page.shared_preferences.set("terms_accepted", True)
@@ -152,9 +145,6 @@ async def build_ui(page: ft.Page):
         )
         page.update()
 
-    # ==================================================================
-    # NAME PROMPT
-    # ==================================================================
     greeting_name = ft.Text("Staff!", size=20, weight=ft.FontWeight.BOLD, color="white")
 
     def open_name_dialog(e=None):
@@ -228,9 +218,6 @@ async def build_ui(page: ft.Page):
         except Exception as ex:
             show_error_screen(ex)
 
-    # ==================================================================
-    # SHARED UI HELPER
-    # ==================================================================
     def field_with_caption(caption_text, field):
         return ft.Column(
             [
@@ -241,9 +228,6 @@ async def build_ui(page: ft.Page):
             tight=True,
         )
 
-    # ==================================================================
-    # MAIN APP (all three tabs)
-    # ==================================================================
     async def build_main_app():
         change_btn = ft.ElevatedButton(
             content=ft.Text("Change Name", weight=ft.FontWeight.BOLD, size=16, color="#4B0082"),
@@ -299,7 +283,7 @@ async def build_ui(page: ft.Page):
             except Exception:
                 return default
 
-        # -------------------- HOUSING UPFRONT TAB --------------------
+        # ---------- HOUSING UPFRONT TAB ----------
         last_org = await load_saved("last_org", "")
         last_salary = await load_saved("last_salary", "")
         last_increment_label = await load_saved("last_increment_label", "Salary Increment")
@@ -405,74 +389,424 @@ async def build_ui(page: ft.Page):
             spacing=10,
         )
 
-        # -------------------- SALARY MANAGEMENT TAB --------------------
-sm_last_basic = await load_saved("sm_basic", "")
-sm_last_housing = await load_saved("sm_housing", "")
-sm_last_transport = await load_saved("sm_transport", "")
-sm_last_other = await load_saved("sm_other", "")
-sm_last_rent = await load_saved("sm_rent", "")
+        # ---------- SALARY MANAGEMENT TAB ----------
+        sm_last_basic = await load_saved("sm_basic", "")
+        sm_last_housing = await load_saved("sm_housing", "")
+        sm_last_transport = await load_saved("sm_transport", "")
+        sm_last_other = await load_saved("sm_other", "")
+        sm_last_rent = await load_saved("sm_rent", "")
 
-async def sm_on_basic_change(e):
-    await page.shared_preferences.set("sm_basic", sm_basic_input.value)
+        async def sm_on_basic_change(e):
+            await page.shared_preferences.set("sm_basic", sm_basic_input.value)
 
-async def sm_on_housing_change(e):
-    await page.shared_preferences.set("sm_housing", sm_housing_input.value)
+        async def sm_on_housing_change(e):
+            await page.shared_preferences.set("sm_housing", sm_housing_input.value)
 
-async def sm_on_transport_change(e):
-    await page.shared_preferences.set("sm_transport", sm_transport_input.value)
+        async def sm_on_transport_change(e):
+            await page.shared_preferences.set("sm_transport", sm_transport_input.value)
 
-async def sm_on_other_change(e):
-    await page.shared_preferences.set("sm_other", sm_other_input.value)
+        async def sm_on_other_change(e):
+            await page.shared_preferences.set("sm_other", sm_other_input.value)
 
-async def sm_on_rent_change(e):
-    await page.shared_preferences.set("sm_rent", sm_rent_input.value)
+        async def sm_on_rent_change(e):
+            await page.shared_preferences.set("sm_rent", sm_rent_input.value)
 
-sm_basic_input = ft.TextField(
-    value=sm_last_basic,
-    keyboard_type=ft.KeyboardType.NUMBER,
-    bgcolor="#FFFFFF",
-    border_color=PURPLE_TEXT,
-    color=PURPLE_TEXT,
-    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-    on_change=sm_on_basic_change
-)
+        sm_basic_input = ft.TextField(
+            value=sm_last_basic,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            on_change=sm_on_basic_change
+        )
 
-sm_housing_input = ft.TextField(
-    value=sm_last_housing,
-    keyboard_type=ft.KeyboardType.NUMBER,
-    bgcolor="#FFFFFF",
-    border_color=PURPLE_TEXT,
-    color=PURPLE_TEXT,
-    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-    on_change=sm_on_housing_change
-)
+        sm_housing_input = ft.TextField(
+            value=sm_last_housing,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            on_change=sm_on_housing_change
+        )
 
-sm_transport_input = ft.TextField(
-    value=sm_last_transport,
-    keyboard_type=ft.KeyboardType.NUMBER,
-    bgcolor="#FFFFFF",
-    border_color=PURPLE_TEXT,
-    color=PURPLE_TEXT,
-    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-    on_change=sm_on_transport_change
-)
+        sm_transport_input = ft.TextField(
+            value=sm_last_transport,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            on_change=sm_on_transport_change
+        )
 
-sm_other_input = ft.TextField(
-    value=sm_last_other,
-    keyboard_type=ft.KeyboardType.NUMBER,
-    bgcolor="#FFFFFF",
-    border_color=PURPLE_TEXT,
-    color=PURPLE_TEXT,
-    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-    on_change=sm_on_other_change
-)
+        sm_other_input = ft.TextField(
+            value=sm_last_other,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            on_change=sm_on_other_change
+        )
 
-sm_rent_input = ft.TextField(
-    value=sm_last_rent,
-    keyboard_type=ft.KeyboardType.NUMBER,
-    bgcolor="#FFFFFF",
-    border_color=PURPLE_TEXT,
-    color=PURPLE_TEXT,
-    text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-    on_change=sm_on_rent_change
-)
+        sm_rent_input = ft.TextField(
+            value=sm_last_rent,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            on_change=sm_on_rent_change
+        )
+
+        sm_result_gross = ft.Text(spans=[ft.TextSpan("Gross Monthly: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=16)
+        sm_result_tax = ft.Text(spans=[ft.TextSpan("Monthly PAYE Tax: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="red", weight=ft.FontWeight.BOLD))], size=14)
+        sm_result_net = ft.Text(spans=[ft.TextSpan("Net Monthly: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=16)
+        sm_result_rent_ded = ft.Text(spans=[ft.TextSpan("Rent Deduction: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="red", weight=ft.FontWeight.BOLD))], size=14)
+        sm_result_final = ft.Text(spans=[ft.TextSpan("Net After Rent: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=16)
+
+        def on_sm_calculate(e):
+            try:
+                basic = float(sm_basic_input.value) if sm_basic_input.value else 0
+                housing = float(sm_housing_input.value) if sm_housing_input.value else 0
+                transport = float(sm_transport_input.value) if sm_transport_input.value else 0
+                other = float(sm_other_input.value) if sm_other_input.value else 0
+                rent = float(sm_rent_input.value) if sm_rent_input.value else 0
+
+                gross_monthly = basic + housing + transport + other
+                annual_tax = compute_paye_annual(gross_monthly * 12)
+                monthly_tax = annual_tax / 12
+                net_monthly = gross_monthly - monthly_tax
+                net_after_rent = net_monthly - rent
+
+                sm_result_gross.spans[1].text = f"₦{gross_monthly:,.2f}"
+                sm_result_tax.spans[1].text = f"₦{monthly_tax:,.2f}"
+                sm_result_net.spans[1].text = f"₦{net_monthly:,.2f}"
+                sm_result_rent_ded.spans[1].text = f"₦{rent:,.2f}"
+                sm_result_final.spans[1].text = f"₦{net_after_rent:,.2f}"
+                page.update()
+            except ValueError:
+                for res in [sm_result_gross, sm_result_tax, sm_result_net, sm_result_rent_ded, sm_result_final]:
+                    res.spans[1].text = "Invalid Input"
+                page.update()
+
+        sm_calc_btn = ft.ElevatedButton("Calculate Monthly Breakdown", on_click=on_sm_calculate, style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082", text_style=ft.TextStyle(weight=ft.FontWeight.BOLD)))
+
+        sm_form = ft.Container(
+            content=ft.Column(
+                controls=[
+                    field_with_caption("Basic Salary (₦)", sm_basic_input),
+                    field_with_caption("Housing Allowance (₦)", sm_housing_input),
+                    field_with_caption("Transport Allowance (₦)", sm_transport_input),
+                    field_with_caption("Other Allowances (₦)", sm_other_input),
+                    field_with_caption("Rent Deduction (₦)", sm_rent_input),
+                    sm_calc_btn,
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=30, tight=True
+            ),
+            padding=20, border_radius=15,
+            bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
+            shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.20, ft.Colors.BLACK))
+        )
+
+        sm_results = ft.Container(
+            content=ft.Column(
+                [sm_result_gross, ft.Divider(height=1, color="#4B0082"),
+                 sm_result_tax, sm_result_net,
+                 ft.Divider(height=1, color="#4B0082"),
+                 sm_result_rent_ded, sm_result_final],
+                spacing=8, tight=True
+            ),
+            padding=15, border_radius=15,
+            bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
+            border=ft.Border(ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700"), ft.BorderSide(2, "#FFD700")),
+            shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK))
+        )
+
+        salary_tab_content = ft.Column(
+            controls=[sm_form, ft.Container(height=10), sm_results],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+        )
+
+        # ---------- MONEY TRACKER TAB ----------
+        async def load_transactions():
+            try:
+                data = await page.shared_preferences.get("transactions")
+                if data:
+                    return json.loads(data)
+                return []
+            except:
+                return []
+
+        async def save_transactions(transactions):
+            await page.shared_preferences.set("transactions", json.dumps(transactions))
+
+        tracker_description = ft.TextField(
+            label="Note (optional)",
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            width=200,
+        )
+        tracker_amount = ft.TextField(
+            label="Amount (₦)",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            width=150,
+        )
+        tracker_type_dropdown = ft.Dropdown(
+            label="Type",
+            options=[
+                ft.dropdown.Option("Income"),
+                ft.dropdown.Option("Expense"),
+            ],
+            value="Income",
+            bgcolor="#FFFFFF",
+            border_color=PURPLE_TEXT,
+            color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            width=150,
+        )
+
+        summary_income = ft.Text("Income: ₦0", size=14, color="green", weight=ft.FontWeight.BOLD)
+        summary_expense = ft.Text("Expense: ₦0", size=14, color="red", weight=ft.FontWeight.BOLD)
+        summary_net = ft.Text("Net: ₦0", size=14, color="white", weight=ft.FontWeight.BOLD)
+        summary_row = ft.Row(
+            controls=[summary_income, summary_expense, summary_net],
+            alignment=ft.MainAxisAlignment.SPACE_AROUND,
+            spacing=10,
+        )
+
+        chart = ft.BarChart(
+            bar_groups=[],
+            left_axis=ft.ChartAxis(
+                labels_size=40,
+                title=ft.Text("Amount (₦)", size=12),
+            ),
+            bottom_axis=ft.ChartAxis(
+                labels=[
+                    ft.ChartAxisLabel(value=0, label=ft.Text("Income", size=12)),
+                    ft.ChartAxisLabel(value=1, label=ft.Text("Expense", size=12)),
+                ],
+                labels_size=40,
+            ),
+            horizontal=False,
+            height=180,
+            expand=True,
+        )
+
+        tracker_list = ft.ListView(expand=True, spacing=5, padding=5)
+
+        async def refresh_tracker():
+            transactions = await load_transactions()
+            now = datetime.datetime.now()
+            current_month = now.month
+            current_year = now.year
+            month_trans = []
+            for t in transactions:
+                try:
+                    dt = datetime.datetime.fromisoformat(t.get("date", ""))
+                    if dt.month == current_month and dt.year == current_year:
+                        month_trans.append(t)
+                except:
+                    pass
+
+            total_income = sum(t["amount"] for t in month_trans if t["type"] == "Income")
+            total_expense = sum(t["amount"] for t in month_trans if t["type"] == "Expense")
+            net = total_income - total_expense
+
+            summary_income.value = f"Income: ₦{total_income:,.2f}"
+            summary_expense.value = f"Expense: ₦{total_expense:,.2f}"
+            summary_net.value = f"Net: ₦{net:,.2f}"
+            summary_net.color = "green" if net >= 0 else "red"
+
+            chart.bar_groups = [
+                ft.BarChartGroup(
+                    x=0,
+                    bars=[ft.BarChartBar(total_income, color=ft.colors.GREEN)],
+                ),
+                ft.BarChartGroup(
+                    x=1,
+                    bars=[ft.BarChartBar(total_expense, color=ft.colors.RED)],
+                ),
+            ]
+            max_val = max(total_income, total_expense, 1000)
+            chart.left_axis.interval = max_val / 5
+            chart.left_axis.max = max_val * 1.1
+
+            sorted_trans = sorted(transactions, key=lambda t: t.get("date", ""), reverse=True)
+            recent = sorted_trans[:15]
+
+            tracker_list.controls.clear()
+            for t in recent:
+                amt = t.get("amount", 0)
+                ttype = t.get("type", "")
+                desc = t.get("description", "")
+                try:
+                    dt = datetime.datetime.fromisoformat(t.get("date", ""))
+                    date_str = dt.strftime("%d %b %H:%M")
+                except:
+                    date_str = ""
+
+                row = ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            ft.Column(
+                                [
+                                    ft.Text(desc or "(no note)", size=14, weight=ft.FontWeight.BOLD, color="white"),
+                                    ft.Text(f"{ttype} • ₦{amt:,.2f} • {date_str}", size=12, color="#FFD700"),
+                                ],
+                                spacing=2,
+                                expand=True,
+                            ),
+                            ft.IconButton(
+                                icon=ft.icons.DELETE_OUTLINE,
+                                icon_color="red",
+                                on_click=lambda e, tid=t.get("id"): delete_transaction(tid),
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    bgcolor=ft.Colors.with_opacity(0.3, ft.Colors.WHITE),
+                    border_radius=5,
+                    padding=8,
+                )
+                tracker_list.controls.append(row)
+
+            page.update()
+
+        async def delete_transaction(tid):
+            transactions = await load_transactions()
+            transactions = [t for t in transactions if t.get("id") != tid]
+            await save_transactions(transactions)
+            await refresh_tracker()
+
+        async def add_transaction(e):
+            desc = tracker_description.value.strip()
+            amt_str = tracker_amount.value.strip()
+            ttype = tracker_type_dropdown.value
+            if not desc:
+                tracker_description.error_text = "Note is optional, but please add a description"
+                page.update()
+                return
+            if not amt_str:
+                tracker_amount.error_text = "Amount required"
+                page.update()
+                return
+            try:
+                amt = float(amt_str)
+                if amt <= 0:
+                    tracker_amount.error_text = "Amount must be positive"
+                    page.update()
+                    return
+            except ValueError:
+                tracker_amount.error_text = "Invalid number"
+                page.update()
+                return
+
+            tracker_description.error_text = None
+            tracker_amount.error_text = None
+
+            transactions = await load_transactions()
+            new_id = max([t.get("id", 0) for t in transactions], default=0) + 1
+            transactions.append({
+                "id": new_id,
+                "description": desc,
+                "amount": amt,
+                "type": ttype,
+                "date": datetime.datetime.now().isoformat(),
+            })
+            await save_transactions(transactions)
+            tracker_description.value = ""
+            tracker_amount.value = ""
+            tracker_type_dropdown.value = "Income"
+            await refresh_tracker()
+
+        add_btn = ft.ElevatedButton(
+            "Add Transaction",
+            on_click=add_transaction,
+            style=ft.ButtonStyle(bgcolor="#FFD700", color="#4B0082", text_style=ft.TextStyle(weight=ft.FontWeight.BOLD))
+        )
+
+        tracker_input_row = ft.Row(
+            controls=[
+                tracker_description,
+                tracker_amount,
+                tracker_type_dropdown,
+                add_btn,
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            wrap=True,
+            spacing=10,
+        )
+
+        tracker_tab_content = ft.Column(
+            controls=[
+                tracker_input_row,
+                ft.Divider(height=1, color="#FFD700"),
+                summary_row,
+                ft.Container(
+                    content=chart,
+                    height=200,
+                    padding=5,
+                    bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
+                    border_radius=10,
+                ),
+                ft.Divider(height=1, color="#FFD700"),
+                ft.Text("Recent Transactions", size=14, weight=ft.FontWeight.BOLD, color="white"),
+                ft.Container(
+                    content=tracker_list,
+                    expand=True,
+                    bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
+                    border_radius=10,
+                    padding=5,
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            expand=True,
+        )
+
+        # ---------- BUILD TABS ----------
+        tabs = ft.Tabs(
+            selected_index=0,
+            tabs=[
+                ft.Tab("Housing Upfront", content=ft.Container(content=housing_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
+                ft.Tab("Salary Management", content=ft.Container(content=salary_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
+                ft.Tab("Money Tracker", content=ft.Container(content=tracker_tab_content, padding=ft.Padding(top=15, left=0, right=0, bottom=0))),
+            ],
+            expand=True,
+        )
+
+        page.controls.clear()
+        page.bgcolor = "#4B0082"
+        page.add(
+            header_container,
+            greeting_row,
+            tabs,
+        )
+
+        await refresh_tracker()
+        page.update()
+
+    # ---------- STARTUP ----------
+    try:
+        terms_accepted = await page.shared_preferences.get("terms_accepted")
+        if not terms_accepted:
+            show_terms_screen()
+        else:
+            await check_name()
+    except Exception as ex:
+        show_error_screen(ex)
+
+
+# Allow the app to run when executed directly
+if __name__ == "__main__":
+    ft.app(target=build_ui, view=ft.AppView.WEB_BROWSER)
