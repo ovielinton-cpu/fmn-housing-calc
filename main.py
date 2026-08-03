@@ -269,7 +269,22 @@ async def build_ui(page: ft.Page):
             scale=1.0,
             rotate=0,
             animate_scale=ft.Animation(3300, ft.AnimationCurve.EASE_IN_OUT),
-            animate_rotation=ft.Animation(9000, ft.AnimationCurve.LINEAR),
+            animate_rotation=ft.Animation(18000, ft.AnimationCurve.LINEAR),
+        )
+
+        logo_backing_square = ft.Container(
+            width=90,
+            height=90,
+            bgcolor="black",
+            border_radius=10,
+            rotate=0,
+            animate_rotation=ft.Animation(18000, ft.AnimationCurve.LINEAR),
+        )
+
+        logo_stack = ft.Stack(
+            controls=[logo_backing_square, logo_container],
+            width=90,
+            height=90,
         )
 
         async def animate_logo_pulse_loop():
@@ -286,13 +301,16 @@ async def build_ui(page: ft.Page):
 
         async def animate_logo_spin_loop():
             angle = 0.0
+            square_angle = 0.0
             full_turn = 6.28318530718
             try:
                 while True:
                     angle += full_turn
+                    square_angle -= full_turn
                     logo_container.rotate = angle
+                    logo_backing_square.rotate = square_angle
                     page.update()
-                    await asyncio.sleep(9.0)
+                    await asyncio.sleep(18.0)
             except Exception:
                 pass
 
@@ -308,7 +326,7 @@ async def build_ui(page: ft.Page):
 
         header_container = ft.Container(
             content=ft.Column(
-                controls=[logo_container, header_text],
+                controls=[logo_stack, header_text],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8
             ),
