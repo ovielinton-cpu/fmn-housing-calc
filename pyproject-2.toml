@@ -1,0 +1,8 @@
+[project]
+name = "naira-finance-hub"
+version = "1.0.0"
+description = "An all-in-one financial tool for Nigerian staff: housing upfront calculator, salary/PAYE breakdown, and personal money tracker."
+
+[tool.flet]
+product = "Naira Finance Hub"
+org = "com.linton"
