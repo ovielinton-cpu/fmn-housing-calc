@@ -268,8 +268,8 @@ async def build_ui(page: ft.Page):
             content=logo_image,
             scale=1.0,
             rotate=0,
-            animate_scale=ft.Animation(1100, ft.AnimationCurve.EASE_IN_OUT),
-            animate_rotation=ft.Animation(3000, ft.AnimationCurve.LINEAR),
+            animate_scale=ft.Animation(3300, ft.AnimationCurve.EASE_IN_OUT),
+            animate_rotation=ft.Animation(9000, ft.AnimationCurve.LINEAR),
         )
 
         async def animate_logo_pulse_loop():
@@ -277,10 +277,10 @@ async def build_ui(page: ft.Page):
                 while True:
                     logo_container.scale = 1.08
                     page.update()
-                    await asyncio.sleep(1.1)
+                    await asyncio.sleep(3.3)
                     logo_container.scale = 1.0
                     page.update()
-                    await asyncio.sleep(1.1)
+                    await asyncio.sleep(3.3)
             except Exception:
                 pass
 
@@ -292,7 +292,7 @@ async def build_ui(page: ft.Page):
                     angle += full_turn
                     logo_container.rotate = angle
                     page.update()
-                    await asyncio.sleep(3.0)
+                    await asyncio.sleep(9.0)
             except Exception:
                 pass
 
@@ -713,24 +713,30 @@ async def build_ui(page: ft.Page):
         mt_status_text = ft.Text("", color="white", size=12, text_align=ft.TextAlign.CENTER)
 
         mt_selected_date = {"value": None}
-        mt_date_button_text = ft.Text("Pick a date (or leave for today)", color="#4B0082", size=13, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+        mt_date_button_text = ft.Text("Transaction Date (Optional)", color="#4B0082", size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
 
         def mt_on_date_picked(e):
             picked = e.control.value
             if picked:
-                mt_selected_date["value"] = picked.date() if hasattr(picked, "date") else picked
-                mt_date_button_text.value = mt_selected_date["value"].strftime("%d %b %Y")
+                picked_date = picked.date() if hasattr(picked, "date") else picked
+                if picked_date > datetime.date.today():
+                    mt_status_text.value = "You can't select a future date. Please pick today or an earlier date."
+                    page.update()
+                    return
+                mt_selected_date["value"] = picked_date
+                mt_date_button_text.value = picked_date.strftime("%d %b %Y")
+                mt_status_text.value = ""
                 page.update()
 
         mt_date_picker = ft.DatePicker(
             first_date=datetime.datetime(2020, 1, 1),
-            last_date=datetime.datetime(datetime.date.today().year + 1, 12, 31),
+            last_date=datetime.datetime.now(),
             current_date=datetime.datetime.now(),
             on_change=mt_on_date_picked,
         )
 
         mt_date_button = ft.ElevatedButton(
-            content=ft.Container(content=mt_date_button_text, width=260),
+            content=ft.Container(content=mt_date_button_text, width=190),
             on_click=lambda e: page.show_dialog(mt_date_picker),
             style=ft.ButtonStyle(bgcolor="#FFD700"),
         )
@@ -783,13 +789,19 @@ async def build_ui(page: ft.Page):
             def edit_on_date_picked(e):
                 picked = e.control.value
                 if picked:
-                    edit_selected_date["value"] = picked.date() if hasattr(picked, "date") else picked
-                    edit_date_button_text.value = edit_selected_date["value"].strftime("%d %b %Y")
+                    picked_date = picked.date() if hasattr(picked, "date") else picked
+                    if picked_date > datetime.date.today():
+                        edit_error_text.value = "You can't select a future date. Please pick today or an earlier date."
+                        page.update()
+                        return
+                    edit_selected_date["value"] = picked_date
+                    edit_date_button_text.value = picked_date.strftime("%d %b %Y")
+                    edit_error_text.value = ""
                     page.update()
 
             edit_date_picker = ft.DatePicker(
                 first_date=datetime.datetime(2020, 1, 1),
-                last_date=datetime.datetime(datetime.date.today().year + 1, 12, 31),
+                last_date=datetime.datetime.now(),
                 current_date=datetime.datetime(existing_date.year, existing_date.month, existing_date.day),
                 on_change=edit_on_date_picked,
             )
@@ -1033,7 +1045,7 @@ async def build_ui(page: ft.Page):
             mt_amount_input.value = ""
             mt_note_input.value = ""
             mt_selected_date["value"] = None
-            mt_date_button_text.value = "Tap to pick a date (optional — defaults to today)"
+            mt_date_button_text.value = "Transaction Date (Optional)"
             mt_status_text.value = "Transaction added."
             current_view_date["year"] = today.year
             current_view_date["month"] = today.month
