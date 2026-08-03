@@ -436,7 +436,7 @@ async def build_ui(page: ft.Page):
                 controls=[
                     field_with_caption("Company / Organization Name (optional)", org_input),
                     field_with_caption("Basic Salary (₦)", salary_input),
-                    field_with_caption("Increment Name (e.g. NDIC)", increment_label_input),
+                    field_with_caption("Increment Name (e.g. NJIC)", increment_label_input),
                     field_with_caption("Increment (%)", increment_input),
                     field_with_caption("Housing Upfront Rate (%)", rate_input),
                     calc_btn
@@ -690,7 +690,7 @@ async def build_ui(page: ft.Page):
         )
 
         # -------------------- MONEY TRACKER TAB --------------------
-        CATEGORY_OPTIONS = ["Food", "Transport", "Housing", "Utilities", "Health", "Entertainment", "Salary", "Business", "Other"]
+        CATEGORY_OPTIONS = ["Food", "Transport", "Housing", "Utilities", "Health", "Entertainment", "Salary", "Business", "Miscellaneous", "Fee", "Other"]
 
         def category_dropdown_options():
             return [
