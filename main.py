@@ -246,9 +246,9 @@ async def build_ui(page: ft.Page):
     # ==================================================================
     async def build_main_app():
         change_btn = ft.ElevatedButton(
-            content=ft.Text("Change Name", weight=ft.FontWeight.BOLD, size=16, color="#4B0082"),
+            content=ft.Text("Change Name", weight=ft.FontWeight.BOLD, size=11, color="#4B0082"),
             on_click=open_name_dialog,
-            style=ft.ButtonStyle(bgcolor="#FFD700")
+            style=ft.ButtonStyle(bgcolor="#FFD700", padding=ft.Padding(left=8, right=8, top=4, bottom=4)),
         )
 
         wave_hand = ft.Container(
@@ -277,10 +277,20 @@ async def build_ui(page: ft.Page):
 
         greeting_row = ft.Container(
             content=ft.Row(
-                controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn, wave_hand],
-                alignment=ft.MainAxisAlignment.CENTER,
+                controls=[
+                    change_btn,
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, wave_hand],
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            spacing=10,
+                            wrap=True,
+                        ),
+                        expand=True,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.START,
                 spacing=10,
-                wrap=True,
             ),
             bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
             border_radius=10,
@@ -741,21 +751,75 @@ async def build_ui(page: ft.Page):
         today = datetime.date.today()
         current_view_date = {"year": today.year, "month": today.month}
 
-        mt_type_dropdown = ft.Dropdown(
-            options=[
-                ft.dropdown.Option(key="income", text="Income"),
-                ft.dropdown.Option(key="expense", text="Expense"),
-            ],
-            value="income",
-            bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        )
-        mt_category_dropdown = ft.Dropdown(
-            options=category_dropdown_options(),
-            value="Other",
-            bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
-            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-        )
+        def build_type_toggle(initial_value):
+            state = {"value": initial_value}
+            income_btn = ft.ElevatedButton(
+                content=ft.Text("Income", weight=ft.FontWeight.BOLD, size=13, color=PURPLE_TEXT if initial_value == "income" else "white"),
+                style=ft.ButtonStyle(bgcolor="#FFD700" if initial_value == "income" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+            )
+            expense_btn = ft.ElevatedButton(
+                content=ft.Text("Expense", weight=ft.FontWeight.BOLD, size=13, color=PURPLE_TEXT if initial_value == "expense" else "white"),
+                style=ft.ButtonStyle(bgcolor="#FFD700" if initial_value == "expense" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+            )
+
+            def select(val):
+                def handler(e):
+                    state["value"] = val
+                    income_btn.style = ft.ButtonStyle(bgcolor="#FFD700" if val == "income" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE))
+                    income_btn.content.color = PURPLE_TEXT if val == "income" else "white"
+                    expense_btn.style = ft.ButtonStyle(bgcolor="#FFD700" if val == "expense" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE))
+                    expense_btn.content.color = PURPLE_TEXT if val == "expense" else "white"
+                    page.update()
+                return handler
+
+            income_btn.on_click = select("income")
+            expense_btn.on_click = select("expense")
+            row = ft.Row([income_btn, expense_btn], spacing=8)
+            return row, state
+
+        def build_category_picker(initial_value):
+            state = {"value": initial_value}
+            label_text = ft.Text(initial_value, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14)
+
+            def open_picker(e):
+                def pick(cat):
+                    def handler(e):
+                        state["value"] = cat
+                        label_text.value = cat
+                        page.pop_dialog()
+                        page.update()
+                    return handler
+
+                rows = [
+                    ft.TextButton(
+                        content=ft.Container(content=ft.Text(c, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), width=220),
+                        on_click=pick(c),
+                    )
+                    for c in CATEGORY_OPTIONS
+                ]
+                dlg = ft.AlertDialog(
+                    modal=True,
+                    bgcolor="#FFFFFF",
+                    title=ft.Text("Select Category", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                    content=ft.Container(content=ft.ListView(controls=rows, spacing=2), width=260, height=350),
+                    actions=[ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT))],
+                    actions_alignment=ft.MainAxisAlignment.END,
+                )
+                page.show_dialog(dlg)
+
+            picker_btn = ft.ElevatedButton(
+                content=ft.Row(
+                    [label_text, ft.Icon(ft.Icons.ARROW_DROP_DOWN, color=PURPLE_TEXT)],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                on_click=open_picker,
+                style=ft.ButtonStyle(bgcolor="#FFFFFF", side=ft.BorderSide(1, PURPLE_TEXT)),
+                width=280,
+            )
+            return picker_btn, state
+
+        mt_type_row, mt_type_state = build_type_toggle("income")
+        mt_category_picker, mt_category_state = build_category_picker("Other")
         mt_amount_input = ft.TextField(keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         mt_note_input = ft.TextField(bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         mt_status_text = ft.Text("", color="white", size=12, text_align=ft.TextAlign.CENTER)
@@ -800,21 +864,8 @@ async def build_ui(page: ft.Page):
         mt_transactions_list_view = ft.ListView(controls=[], spacing=8, height=260)
 
         def open_edit_dialog(actual_idx, entry):
-            edit_type_dropdown = ft.Dropdown(
-                options=[
-                    ft.dropdown.Option(key="income", text="Income"),
-                    ft.dropdown.Option(key="expense", text="Expense"),
-                ],
-                value=entry.get("type", "expense"),
-                bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
-                text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            )
-            edit_category_dropdown = ft.Dropdown(
-                options=category_dropdown_options(),
-                value=entry.get("category", "Other"),
-                bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
-                text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-            )
+            edit_type_row, edit_type_state = build_type_toggle(entry.get("type", "expense"))
+            edit_category_picker, edit_category_state = build_category_picker(entry.get("category", "Other"))
             edit_amount_input = ft.TextField(
                 value=str(entry.get("amount", "")), keyboard_type=ft.KeyboardType.NUMBER,
                 bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
@@ -868,8 +919,8 @@ async def build_ui(page: ft.Page):
                     return
                 full = await load_transactions()
                 if 0 <= actual_idx < len(full):
-                    full[actual_idx]["type"] = edit_type_dropdown.value
-                    full[actual_idx]["category"] = edit_category_dropdown.value
+                    full[actual_idx]["type"] = edit_type_state["value"]
+                    full[actual_idx]["category"] = edit_category_state["value"]
                     full[actual_idx]["amount"] = new_amount
                     full[actual_idx]["note"] = (edit_note_input.value or "").strip()
                     full[actual_idx]["date"] = edit_selected_date["value"].isoformat()
@@ -892,8 +943,8 @@ async def build_ui(page: ft.Page):
                 content=ft.Container(
                     content=ft.Column(
                         [
-                            field_with_caption("Type", edit_type_dropdown),
-                            field_with_caption("Category", edit_category_dropdown),
+                            field_with_caption("Type", edit_type_row),
+                            field_with_caption("Category", edit_category_picker),
                             field_with_caption("Amount (₦)", edit_amount_input),
                             field_with_caption("Note", edit_note_input),
                             field_with_caption("Date", edit_date_button),
@@ -1086,8 +1137,8 @@ async def build_ui(page: ft.Page):
                 return
             chosen_date = mt_selected_date["value"] or datetime.date.today()
             entry = {
-                "type": mt_type_dropdown.value or "income",
-                "category": mt_category_dropdown.value or "Other",
+                "type": mt_type_state["value"] or "income",
+                "category": mt_category_state["value"] or "Other",
                 "amount": amount,
                 "note": (mt_note_input.value or "").strip(),
                 "date": chosen_date.isoformat(),
@@ -1111,8 +1162,8 @@ async def build_ui(page: ft.Page):
         mt_form = ft.Container(
             content=ft.Column(
                 controls=[
-                    field_with_caption("Type", mt_type_dropdown),
-                    field_with_caption("Category", mt_category_dropdown),
+                    field_with_caption("Type", mt_type_row),
+                    field_with_caption("Category", mt_category_picker),
                     field_with_caption("Amount (₦)", mt_amount_input),
                     field_with_caption("Note (optional)", mt_note_input),
                     field_with_caption("Date", mt_date_button),
