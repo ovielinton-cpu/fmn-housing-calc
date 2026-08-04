@@ -724,7 +724,7 @@ async def build_ui(page: ft.Page):
 
         def category_dropdown_options():
             return [
-                ft.dropdown.Option(key=c, text=c, content=ft.Text(c, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+                ft.dropdown.Option(key=c, text=c)
                 for c in CATEGORY_OPTIONS
             ]
 
@@ -743,18 +743,18 @@ async def build_ui(page: ft.Page):
 
         mt_type_dropdown = ft.Dropdown(
             options=[
-                ft.dropdown.Option(key="income", text="Income", content=ft.Text("Income", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)),
-                ft.dropdown.Option(key="expense", text="Expense", content=ft.Text("Expense", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)),
+                ft.dropdown.Option(key="income", text="Income"),
+                ft.dropdown.Option(key="expense", text="Expense"),
             ],
             value="income",
-            bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color="white",
-            text_style=ft.TextStyle(color="white", weight=ft.FontWeight.BOLD),
+            bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         )
         mt_category_dropdown = ft.Dropdown(
             options=category_dropdown_options(),
             value="Other",
-            bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color="white",
-            text_style=ft.TextStyle(color="white", weight=ft.FontWeight.BOLD),
+            bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         )
         mt_amount_input = ft.TextField(keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         mt_note_input = ft.TextField(bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
@@ -802,8 +802,8 @@ async def build_ui(page: ft.Page):
         def open_edit_dialog(actual_idx, entry):
             edit_type_dropdown = ft.Dropdown(
                 options=[
-                    ft.dropdown.Option(key="income", text="Income", content=ft.Text("Income", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)),
-                    ft.dropdown.Option(key="expense", text="Expense", content=ft.Text("Expense", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)),
+                    ft.dropdown.Option(key="income", text="Income"),
+                    ft.dropdown.Option(key="expense", text="Expense"),
                 ],
                 value=entry.get("type", "expense"),
                 bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
@@ -1313,8 +1313,15 @@ async def build_ui(page: ft.Page):
             animate_position=ft.Animation(80, ft.AnimationCurve.EASE_OUT),
         )
 
+        last_tilt_update = {"time": 0.0}
+
         def handle_tilt_reading(e: ft.AccelerometerReadingEvent):
             try:
+                now = asyncio.get_event_loop().time()
+                if now - last_tilt_update["time"] < 0.12:
+                    return
+                last_tilt_update["time"] = now
+
                 tilt_x = max(-9.8, min(9.8, e.x))
                 tilt_y = max(-9.8, min(9.8, e.y))
 
@@ -1347,7 +1354,7 @@ async def build_ui(page: ft.Page):
             ft.Accelerometer(
                 on_reading=handle_tilt_reading,
                 on_error=handle_tilt_error,
-                interval=ft.Duration(milliseconds=30),
+                interval=ft.Duration(milliseconds=120),
                 cancel_on_error=False,
             )
         )
