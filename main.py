@@ -311,6 +311,12 @@ async def build_ui(page: ft.Page):
             height=90,
         )
 
+        logo_wrapper = ft.Container(
+            content=logo_stack,
+            offset=ft.Offset(0, 0),
+            animate_offset=ft.Animation(80, ft.AnimationCurve.EASE_OUT),
+        )
+
         async def animate_logo_pulse_loop():
             try:
                 while True:
@@ -350,7 +356,7 @@ async def build_ui(page: ft.Page):
 
         header_container = ft.Container(
             content=ft.Column(
-                controls=[logo_stack, header_text],
+                controls=[logo_wrapper, header_text],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8
             ),
@@ -1319,6 +1325,10 @@ async def build_ui(page: ft.Page):
                 foreground_layer.right = -fg_shift_x
                 foreground_layer.top = fg_shift_y
                 foreground_layer.bottom = -fg_shift_y
+
+                logo_offset_x = max(-0.15, min(0.15, tilt_x * 0.02))
+                logo_offset_y = max(-0.15, min(0.15, tilt_y * 0.02))
+                logo_wrapper.offset = ft.Offset(logo_offset_x, logo_offset_y)
 
                 page.update()
             except Exception:
