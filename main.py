@@ -1286,25 +1286,40 @@ async def build_ui(page: ft.Page):
             scroll=ft.ScrollMode.AUTO,
         )
 
-        TILT_OVERSCAN = 20
+        TILT_OVERSCAN = 70
 
         background_image = ft.Image(
             src="background.png",
             fit=ft.BoxFit.COVER,
             left=-TILT_OVERSCAN, top=-TILT_OVERSCAN, right=-TILT_OVERSCAN, bottom=-TILT_OVERSCAN,
-            animate_position=ft.Animation(150, ft.AnimationCurve.EASE_OUT),
+            animate_position=ft.Animation(80, ft.AnimationCurve.EASE_OUT),
+        )
+
+        foreground_layer = ft.Container(
+            content=main_content, alignment=ft.Alignment(0, -1), padding=10,
+            left=0, top=0, right=0, bottom=0,
+            animate_position=ft.Animation(80, ft.AnimationCurve.EASE_OUT),
         )
 
         def handle_tilt_reading(e: ft.AccelerometerReadingEvent):
             try:
                 tilt_x = max(-9.8, min(9.8, e.x))
                 tilt_y = max(-9.8, min(9.8, e.y))
-                shift_x = tilt_x * 1.2
-                shift_y = tilt_y * 1.2
-                background_image.left = -TILT_OVERSCAN + shift_x
-                background_image.right = -TILT_OVERSCAN - shift_x
-                background_image.top = -TILT_OVERSCAN + shift_y
-                background_image.bottom = -TILT_OVERSCAN - shift_y
+
+                bg_shift_x = tilt_x * 6.0
+                bg_shift_y = tilt_y * 6.0
+                background_image.left = -TILT_OVERSCAN + bg_shift_x
+                background_image.right = -TILT_OVERSCAN - bg_shift_x
+                background_image.top = -TILT_OVERSCAN + bg_shift_y
+                background_image.bottom = -TILT_OVERSCAN - bg_shift_y
+
+                fg_shift_x = tilt_x * -2.0
+                fg_shift_y = tilt_y * -2.0
+                foreground_layer.left = fg_shift_x
+                foreground_layer.right = -fg_shift_x
+                foreground_layer.top = fg_shift_y
+                foreground_layer.bottom = -fg_shift_y
+
                 page.update()
             except Exception:
                 pass
@@ -1316,7 +1331,7 @@ async def build_ui(page: ft.Page):
             ft.Accelerometer(
                 on_reading=handle_tilt_reading,
                 on_error=handle_tilt_error,
-                interval=ft.Duration(milliseconds=100),
+                interval=ft.Duration(milliseconds=30),
                 cancel_on_error=False,
             )
         )
@@ -1324,7 +1339,7 @@ async def build_ui(page: ft.Page):
         view_container = ft.Stack(
             controls=[
                 background_image,
-                ft.Container(content=main_content, alignment=ft.Alignment(0, -1), padding=10, left=0, top=0, right=0, bottom=0),
+                foreground_layer,
             ],
             expand=True,
             opacity=0,
