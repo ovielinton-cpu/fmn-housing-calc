@@ -930,69 +930,75 @@ async def build_ui(page: ft.Page):
                     continue
                 if d.year == view_year and d.month == view_month:
                     filtered.append((idx, t))
+                    cat = t.get("category", "Other")
+                    entry = category_totals.setdefault(cat, {"income": 0.0, "expense": 0.0})
                     if t["type"] == "income":
                         month_income += t["amount"]
+                        entry["income"] += t["amount"]
                     else:
                         month_expense += t["amount"]
-                        cat = t.get("category", "Other")
-                        category_totals[cat] = category_totals.get(cat, 0.0) + t["amount"]
+                        entry["expense"] += t["amount"]
 
             net = month_income - month_expense
             mt_summary_income.spans[1].text = f"₦{month_income:,.2f}"
             mt_summary_expense.spans[1].text = f"₦{month_expense:,.2f}"
             mt_summary_net.spans[1].text = f"₦{net:,.2f}"
 
-            max_val = max(month_income, month_expense, 1.0)
-            max_bar_height = 150
-            income_height = max(10, (month_income / max_val) * max_bar_height)
-            expense_height = max(10, (month_expense / max_val) * max_bar_height)
+            # Build a per-category bar so the user can see where money actually goes,
+            # not just a single Income-vs-Expense total.
+            category_nets = {cat: v["income"] - v["expense"] for cat, v in category_totals.items()}
+            sorted_categories = sorted(category_nets.items(), key=lambda kv: abs(kv[1]), reverse=True)[:8]
 
-            mt_chart_container.content = ft.Column(
-                [
-                    ft.Row(
-                        [
-                            ft.Container(height=income_height, width=60, bgcolor="#2E8B57", border_radius=6),
-                            ft.Container(height=expense_height, width=60, bgcolor="#C62828", border_radius=6),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_EVENLY,
-                        vertical_alignment=ft.CrossAxisAlignment.END,
-                        height=max_bar_height,
-                    ),
-                    ft.Row(
-                        [
-                            ft.Column(
-                                [
-                                    ft.Text(f"₦{month_income:,.0f}", size=11, color="white"),
-                                    ft.Text("Income", size=12, color="white", weight=ft.FontWeight.BOLD),
-                                ],
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, width=60,
-                            ),
-                            ft.Column(
-                                [
-                                    ft.Text(f"₦{month_expense:,.0f}", size=11, color="white"),
-                                    ft.Text("Expense", size=12, color="white", weight=ft.FontWeight.BOLD),
-                                ],
-                                horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, width=60,
-                            ),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_EVENLY,
-                    ),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=8,
-            )
+            if sorted_categories:
+                max_bar_height = 150
+                max_abs = max((abs(v) for _, v in sorted_categories), default=1.0) or 1.0
+
+                bars_row = []
+                labels_row = []
+                for cat, net_amt in sorted_categories:
+                    bar_height = max(10, (abs(net_amt) / max_abs) * max_bar_height)
+                    bar_color = "#2E8B57" if net_amt >= 0 else "#C62828"
+                    bars_row.append(ft.Container(height=bar_height, width=48, bgcolor=bar_color, border_radius=6))
+                    labels_row.append(
+                        ft.Column(
+                            [
+                                ft.Text(f"₦{abs(net_amt):,.0f}", size=10, color="white"),
+                                ft.Text(cat, size=11, color="white", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                            ],
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, width=64,
+                        )
+                    )
+
+                mt_chart_container.content = ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Row(bars_row, alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.END, height=max_bar_height, spacing=16),
+                                ft.Row(labels_row, alignment=ft.MainAxisAlignment.CENTER, spacing=16),
+                            ],
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=8,
+                        )
+                    ],
+                    scroll=ft.ScrollMode.AUTO,
+                )
+            else:
+                mt_chart_container.content = ft.Text("No transactions this month yet.", color="white", size=13, text_align=ft.TextAlign.CENTER)
 
             if category_totals:
-                sorted_cats = sorted(category_totals.items(), key=lambda kv: kv[1], reverse=True)
+                sorted_cats_full = sorted(category_nets.items(), key=lambda kv: abs(kv[1]), reverse=True)
                 mt_category_list_view.controls = [
                     ft.Row(
-                        [ft.Text(cat, color="white", size=13), ft.Text(f"₦{amt:,.2f}", color="white", size=13, weight=ft.FontWeight.BOLD)],
+                        [
+                            ft.Text(cat, color="white", size=13),
+                            ft.Text(f"{'+' if amt >= 0 else '-'}₦{abs(amt):,.2f}", color="#2E8B57" if amt >= 0 else "#C62828", size=13, weight=ft.FontWeight.BOLD),
+                        ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     )
-                    for cat, amt in sorted_cats
+                    for cat, amt in sorted_cats_full
                 ]
             else:
-                mt_category_list_view.controls = [ft.Text("No expenses this month yet.", color="white", size=12)]
+                mt_category_list_view.controls = [ft.Text("No transactions this month yet.", color="white", size=12)]
 
             def make_delete(actual_idx):
                 async def _delete(e):
@@ -1138,7 +1144,7 @@ async def build_ui(page: ft.Page):
 
         mt_category_card = ft.Container(
             content=ft.Column(
-                [ft.Text("Expenses by Category", color="white", weight=ft.FontWeight.BOLD, size=14), mt_category_list_view],
+                [ft.Text("By Category (Net)", color="white", weight=ft.FontWeight.BOLD, size=14), mt_category_list_view],
                 spacing=8,
             ),
             padding=15, border_radius=15,
