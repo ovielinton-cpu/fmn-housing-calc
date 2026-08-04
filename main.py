@@ -159,14 +159,14 @@ async def build_ui(page: ft.Page):
     def open_name_dialog(e=None):
         async def save_name(e):
             new_name = name_field.value
-            greeting_name.value = f"{new_name}! 👋" if new_name else "Staff!"
+            greeting_name.value = f"{new_name}!" if new_name else "Staff!"
             await page.shared_preferences.set("user_name", new_name)
             page.pop_dialog()
             page.update()
 
         name_field = ft.TextField(
             label="Your Name",
-            value=greeting_name.value.split("!")[0] if "👋" in greeting_name.value else "",
+            value=greeting_name.value.rstrip("!") if greeting_name.value != "Staff!" else "",
             autofocus=True,
             bgcolor="#FFFFFF",
             color=PURPLE_TEXT,
@@ -251,9 +251,33 @@ async def build_ui(page: ft.Page):
             style=ft.ButtonStyle(bgcolor="#FFD700")
         )
 
+        wave_hand = ft.Container(
+            content=ft.Text("👋", size=20),
+            rotate=0,
+            animate_rotation=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT),
+        )
+
+        async def animate_wave_loop():
+            try:
+                while True:
+                    wave_hand.rotate = 0.35
+                    page.update()
+                    await asyncio.sleep(0.3)
+                    wave_hand.rotate = -0.35
+                    page.update()
+                    await asyncio.sleep(0.3)
+                    wave_hand.rotate = 0.35
+                    page.update()
+                    await asyncio.sleep(0.3)
+                    wave_hand.rotate = 0
+                    page.update()
+                    await asyncio.sleep(1.5)
+            except Exception:
+                pass
+
         greeting_row = ft.Container(
             content=ft.Row(
-                controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn],
+                controls=[ft.Text("Welcome back,", size=20, color="white"), greeting_name, change_btn, wave_hand],
                 alignment=ft.MainAxisAlignment.CENTER,
                 spacing=10,
                 wrap=True,
@@ -337,7 +361,7 @@ async def build_ui(page: ft.Page):
         try:
             saved_name = await page.shared_preferences.get("user_name")
             if saved_name:
-                greeting_name.value = f"{saved_name}! 👋"
+                greeting_name.value = f"{saved_name}!"
         except Exception:
             pass
 
@@ -1177,11 +1201,19 @@ async def build_ui(page: ft.Page):
                 page.update()
             return handler
 
+        tab_icon_containers = []
+
         for i, label in enumerate(tab_labels):
+            icon_container = ft.Container(
+                content=ft.Icon(tab_icons[i], size=16, color=tab_icon_colors[i]),
+                scale=1.0,
+                animate_scale=ft.Animation(700, ft.AnimationCurve.EASE_IN_OUT),
+            )
+            tab_icon_containers.append(icon_container)
             tab_buttons.append(
                 ft.ElevatedButton(
                     content=ft.Row(
-                        [ft.Icon(tab_icons[i], size=16, color=tab_icon_colors[i]), ft.Text(label, size=12, weight=ft.FontWeight.BOLD, color="#4B0082" if i == 0 else "white")],
+                        [icon_container, ft.Text(label, size=12, weight=ft.FontWeight.BOLD, color="#4B0082" if i == 0 else "white")],
                         spacing=4, tight=True,
                     ),
                     style=ft.ButtonStyle(bgcolor="#FFD700" if i == 0 else ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
@@ -1189,6 +1221,21 @@ async def build_ui(page: ft.Page):
             )
         for i, btn in enumerate(tab_buttons):
             btn.on_click = select_tab(i)
+
+        async def animate_tab_icons_loop():
+            try:
+                while True:
+                    for c in tab_icon_containers:
+                        c.scale = 1.25
+                    page.update()
+                    await asyncio.sleep(0.7)
+                    for c in tab_icon_containers:
+                        c.scale = 1.0
+                    page.update()
+                    await asyncio.sleep(0.7)
+            except Exception:
+                pass
+
 
         tab_bar_row = ft.Row(tab_buttons, alignment=ft.MainAxisAlignment.CENTER, wrap=True, spacing=6)
 
@@ -1258,6 +1305,8 @@ async def build_ui(page: ft.Page):
         page.update()
         asyncio.create_task(animate_logo_pulse_loop())
         asyncio.create_task(animate_logo_spin_loop())
+        asyncio.create_task(animate_wave_loop())
+        asyncio.create_task(animate_tab_icons_loop())
 
     # ==================================================================
     # STARTUP FLOW
