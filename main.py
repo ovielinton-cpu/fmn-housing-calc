@@ -1286,7 +1286,7 @@ async def build_ui(page: ft.Page):
             scroll=ft.ScrollMode.AUTO,
         )
 
-        TILT_OVERSCAN = 70
+        TILT_OVERSCAN = 45
 
         background_image = ft.Image(
             src="background.png",
@@ -1306,15 +1306,15 @@ async def build_ui(page: ft.Page):
                 tilt_x = max(-9.8, min(9.8, e.x))
                 tilt_y = max(-9.8, min(9.8, e.y))
 
-                bg_shift_x = tilt_x * 6.0
-                bg_shift_y = tilt_y * 6.0
+                bg_shift_x = tilt_x * 3.6
+                bg_shift_y = tilt_y * 3.6
                 background_image.left = -TILT_OVERSCAN + bg_shift_x
                 background_image.right = -TILT_OVERSCAN - bg_shift_x
                 background_image.top = -TILT_OVERSCAN + bg_shift_y
                 background_image.bottom = -TILT_OVERSCAN - bg_shift_y
 
-                fg_shift_x = tilt_x * -2.0
-                fg_shift_y = tilt_y * -2.0
+                fg_shift_x = tilt_x * -1.2
+                fg_shift_y = tilt_y * -1.2
                 foreground_layer.left = fg_shift_x
                 foreground_layer.right = -fg_shift_x
                 foreground_layer.top = fg_shift_y
