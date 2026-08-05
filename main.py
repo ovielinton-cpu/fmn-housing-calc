@@ -859,6 +859,12 @@ async def build_ui(page: ft.Page):
         mt_summary_expense = ft.Text(spans=[ft.TextSpan("Expense: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
         mt_summary_net = ft.Text(spans=[ft.TextSpan("Net: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
 
+        mt_annual_label = ft.Text("", size=15, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)
+        mt_annual_income = ft.Text(spans=[ft.TextSpan("Total Income: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+        mt_annual_expense = ft.Text(spans=[ft.TextSpan("Total Expense: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+        mt_annual_net = ft.Text(spans=[ft.TextSpan("Annual Net: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
+        mt_annual_category_list_view = ft.Column([], spacing=6)
+
         mt_chart_container = ft.Container(padding=10, alignment=ft.Alignment(0, 0))
         mt_category_list_view = ft.Column([], spacing=6)
         mt_transactions_list_view = ft.ListView(controls=[], spacing=8, height=260)
@@ -994,6 +1000,47 @@ async def build_ui(page: ft.Page):
             mt_summary_income.spans[1].text = f"₦{month_income:,.2f}"
             mt_summary_expense.spans[1].text = f"₦{month_expense:,.2f}"
             mt_summary_net.spans[1].text = f"₦{net:,.2f}"
+
+            # Annual accumulation across every month of the currently-viewed year
+            annual_income = 0.0
+            annual_expense = 0.0
+            annual_category_totals = {}
+            for t in transactions:
+                try:
+                    d = datetime.date.fromisoformat(t["date"])
+                except Exception:
+                    continue
+                if d.year == view_year:
+                    cat = t.get("category", "Other")
+                    cat_entry = annual_category_totals.setdefault(cat, {"income": 0.0, "expense": 0.0})
+                    if t["type"] == "income":
+                        annual_income += t["amount"]
+                        cat_entry["income"] += t["amount"]
+                    else:
+                        annual_expense += t["amount"]
+                        cat_entry["expense"] += t["amount"]
+            annual_net = annual_income - annual_expense
+
+            mt_annual_label.value = f"Annual Summary ({view_year})"
+            mt_annual_income.spans[1].text = f"₦{annual_income:,.2f}"
+            mt_annual_expense.spans[1].text = f"₦{annual_expense:,.2f}"
+            mt_annual_net.spans[1].text = f"₦{annual_net:,.2f}"
+
+            if annual_category_totals:
+                annual_category_nets = {cat: v["income"] - v["expense"] for cat, v in annual_category_totals.items()}
+                sorted_annual_cats = sorted(annual_category_nets.items(), key=lambda kv: abs(kv[1]), reverse=True)
+                mt_annual_category_list_view.controls = [
+                    ft.Row(
+                        [
+                            ft.Text(cat, color="white", size=13),
+                            ft.Text(f"{'+' if amt >= 0 else '-'}₦{abs(amt):,.2f}", color="#2E8B57" if amt >= 0 else "#C62828", size=13, weight=ft.FontWeight.BOLD),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    )
+                    for cat, amt in sorted_annual_cats
+                ]
+            else:
+                mt_annual_category_list_view.controls = [ft.Text("No transactions this year yet.", color="white", size=12)]
 
             # Build a per-category bar so the user can see where money actually goes,
             # not just a single Income-vs-Expense total.
@@ -1184,6 +1231,23 @@ async def build_ui(page: ft.Page):
             animate_scale=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
         )
 
+        mt_annual_container = ft.Container(
+            content=ft.Column(
+                [
+                    mt_annual_label, ft.Divider(height=1, color="#4B0082"),
+                    mt_annual_income, mt_annual_expense, mt_annual_net,
+                    ft.Divider(height=1, color="#4B0082"),
+                    ft.Text("By Category (Full Year)", color="white", weight=ft.FontWeight.BOLD, size=13),
+                    mt_annual_category_list_view,
+                ],
+                spacing=8, tight=True,
+            ),
+            padding=15, border_radius=15,
+            bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
+            border=ft.Border(ft.BorderSide(2, "#1E88E5"), ft.BorderSide(2, "#1E88E5"), ft.BorderSide(2, "#1E88E5"), ft.BorderSide(2, "#1E88E5")),
+            shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK)),
+        )
+
         mt_chart_card = ft.Container(
             content=mt_chart_container,
             padding=10, border_radius=15,
@@ -1215,6 +1279,7 @@ async def build_ui(page: ft.Page):
                 mt_form, ft.Container(height=10),
                 mt_month_nav, ft.Container(height=5),
                 mt_summary_container, ft.Container(height=10),
+                mt_annual_container, ft.Container(height=10),
                 mt_chart_card, ft.Container(height=10),
                 mt_category_card, ft.Container(height=10),
                 mt_list_card,
