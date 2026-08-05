@@ -1004,33 +1004,30 @@ async def build_ui(page: ft.Page):
                 max_bar_height = 150
                 max_abs = max((abs(v) for _, v in sorted_categories), default=1.0) or 1.0
 
-                bars_row = []
-                labels_row = []
+                category_units = []
                 for cat, net_amt in sorted_categories:
                     bar_height = max(10, (abs(net_amt) / max_abs) * max_bar_height)
                     bar_color = "#2E8B57" if net_amt >= 0 else "#C62828"
-                    bars_row.append(ft.Container(height=bar_height, width=48, bgcolor=bar_color, border_radius=6))
-                    labels_row.append(
+                    category_units.append(
                         ft.Column(
                             [
+                                ft.Container(
+                                    content=ft.Container(height=bar_height, width=44, bgcolor=bar_color, border_radius=6),
+                                    height=max_bar_height,
+                                    alignment=ft.Alignment(0, 1),
+                                ),
                                 ft.Text(f"₦{abs(net_amt):,.0f}", size=10, color="white"),
                                 ft.Text(cat, size=11, color="white", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
                             ],
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, width=64,
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=4,
+                            width=70,
                         )
                     )
 
                 mt_chart_container.content = ft.Row(
-                    [
-                        ft.Column(
-                            [
-                                ft.Row(bars_row, alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.END, height=max_bar_height, spacing=16),
-                                ft.Row(labels_row, alignment=ft.MainAxisAlignment.CENTER, spacing=16),
-                            ],
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            spacing=8,
-                        )
-                    ],
+                    category_units,
+                    spacing=10,
                     scroll=ft.ScrollMode.AUTO,
                 )
             else:
