@@ -3,6 +3,7 @@ import asyncio
 import flet_ads as fta
 import json
 import datetime
+from fpdf import FPDF
 
 async def build_ui(page: ft.Page):
     page.title = "Naira Finance Hub"
@@ -748,6 +749,98 @@ async def build_ui(page: ft.Page):
         async def save_transactions(transactions):
             await page.shared_preferences.set("money_transactions", json.dumps(transactions))
 
+        # -------------------- PDF LOG BOOK EXPORT --------------------
+        def build_transactions_pdf_bytes(title, txn_list):
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 16)
+            pdf.cell(0, 10, "Naira Finance Hub", ln=True, align="C")
+            pdf.set_font("Helvetica", "", 12)
+            pdf.cell(0, 8, title, ln=True, align="C")
+            pdf.ln(4)
+
+            total_income = sum(t["amount"] for t in txn_list if t["type"] == "income")
+            total_expense = sum(t["amount"] for t in txn_list if t["type"] == "expense")
+            net = total_income - total_expense
+
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 7, f"Total Income: NGN {total_income:,.2f}", ln=True)
+            pdf.cell(0, 7, f"Total Expense: NGN {total_expense:,.2f}", ln=True)
+            pdf.cell(0, 7, f"Net: NGN {net:,.2f}", ln=True)
+            pdf.ln(6)
+
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_fill_color(230, 230, 230)
+            pdf.cell(25, 8, "Date", border=1, fill=True)
+            pdf.cell(20, 8, "Type", border=1, fill=True)
+            pdf.cell(35, 8, "Category", border=1, fill=True)
+            pdf.cell(65, 8, "Note", border=1, fill=True)
+            pdf.cell(35, 8, "Amount", border=1, fill=True, ln=True)
+
+            pdf.set_font("Helvetica", "", 9)
+            sorted_txns = sorted(txn_list, key=lambda t: t.get("date", ""))
+            for t in sorted_txns:
+                sign = "+" if t["type"] == "income" else "-"
+                note = (t.get("note", "") or "-")[:35]
+                pdf.cell(25, 7, t.get("date", ""), border=1)
+                pdf.cell(20, 7, t["type"].capitalize(), border=1)
+                pdf.cell(35, 7, t.get("category", "Other")[:20], border=1)
+                pdf.cell(65, 7, note, border=1)
+                pdf.cell(35, 7, f"{sign}NGN {t['amount']:,.2f}", border=1, ln=True)
+
+            return bytes(pdf.output())
+
+        pdf_file_picker = ft.FilePicker()
+        page.services.append(pdf_file_picker)
+
+        async def export_month_pdf(e):
+            transactions = await load_transactions()
+            view_year = current_view_date["year"]
+            view_month = current_view_date["month"]
+            month_txns = []
+            for t in transactions:
+                try:
+                    d = datetime.date.fromisoformat(t["date"])
+                except Exception:
+                    continue
+                if d.year == view_year and d.month == view_month:
+                    month_txns.append(t)
+
+            month_name = datetime.date(view_year, view_month, 1).strftime("%B %Y")
+            pdf_bytes = build_transactions_pdf_bytes(f"Monthly Log - {month_name}", month_txns)
+            file_path = await pdf_file_picker.save_file(
+                dialog_title="Save Monthly Log",
+                file_name=f"NairaFinanceHub_{month_name.replace(' ', '_')}.pdf",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["pdf"],
+                src_bytes=pdf_bytes,
+            )
+            mt_status_text.value = "Monthly log saved!" if file_path else "Save cancelled."
+            page.update()
+
+        async def export_year_pdf(e):
+            transactions = await load_transactions()
+            view_year = current_view_date["year"]
+            year_txns = []
+            for t in transactions:
+                try:
+                    d = datetime.date.fromisoformat(t["date"])
+                except Exception:
+                    continue
+                if d.year == view_year:
+                    year_txns.append(t)
+
+            pdf_bytes = build_transactions_pdf_bytes(f"Annual Log - {view_year}", year_txns)
+            file_path = await pdf_file_picker.save_file(
+                dialog_title="Save Annual Log",
+                file_name=f"NairaFinanceHub_{view_year}_Annual.pdf",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["pdf"],
+                src_bytes=pdf_bytes,
+            )
+            mt_status_text.value = "Annual log saved!" if file_path else "Save cancelled."
+            page.update()
+
         today = datetime.date.today()
         current_view_date = {"year": today.year, "month": today.month}
 
@@ -1248,6 +1341,24 @@ async def build_ui(page: ft.Page):
             shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK)),
         )
 
+        mt_export_row = ft.Row(
+            [
+                ft.ElevatedButton(
+                    content=ft.Text("Export Month (PDF)", size=12, weight=ft.FontWeight.BOLD, color="#4B0082"),
+                    on_click=export_month_pdf,
+                    style=ft.ButtonStyle(bgcolor="#FFD700"),
+                ),
+                ft.ElevatedButton(
+                    content=ft.Text("Export Year (PDF)", size=12, weight=ft.FontWeight.BOLD, color="#4B0082"),
+                    on_click=export_year_pdf,
+                    style=ft.ButtonStyle(bgcolor="#FFD700"),
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=10,
+            wrap=True,
+        )
+
         mt_chart_card = ft.Container(
             content=mt_chart_container,
             padding=10, border_radius=15,
@@ -1280,6 +1391,7 @@ async def build_ui(page: ft.Page):
                 mt_month_nav, ft.Container(height=5),
                 mt_summary_container, ft.Container(height=10),
                 mt_annual_container, ft.Container(height=10),
+                mt_export_row, ft.Container(height=10),
                 mt_chart_card, ft.Container(height=10),
                 mt_category_card, ft.Container(height=10),
                 mt_list_card,
