@@ -732,6 +732,23 @@ async def build_ui(page: ft.Page):
 
         # -------------------- MONEY TRACKER TAB --------------------
         CATEGORY_OPTIONS = ["Food", "Transport", "Housing", "Utilities", "Health", "Entertainment", "Salary", "Business", "Miscellaneous", "Fee", "Other"]
+        CATEGORY_ICONS = {
+            "Food": ft.Icons.RESTAURANT_ROUNDED,
+            "Transport": ft.Icons.DIRECTIONS_CAR_ROUNDED,
+            "Housing": ft.Icons.HOME_ROUNDED,
+            "Utilities": ft.Icons.BOLT_ROUNDED,
+            "Health": ft.Icons.LOCAL_HOSPITAL_ROUNDED,
+            "Entertainment": ft.Icons.MOVIE_ROUNDED,
+            "Salary": ft.Icons.PAYMENTS_ROUNDED,
+            "Business": ft.Icons.BUSINESS_CENTER_ROUNDED,
+            "Miscellaneous": ft.Icons.CATEGORY_ROUNDED,
+            "Fee": ft.Icons.RECEIPT_LONG_ROUNDED,
+            "Other": ft.Icons.LABEL_ROUNDED,
+        }
+
+        def category_icon(cat):
+            return CATEGORY_ICONS.get(cat, ft.Icons.LABEL_ROUNDED)
+
 
         def category_dropdown_options():
             return [
@@ -873,19 +890,27 @@ async def build_ui(page: ft.Page):
         def build_category_picker(initial_value):
             state = {"value": initial_value}
             label_text = ft.Text(initial_value, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14)
+            label_icon = ft.Icon(category_icon(initial_value), color=PURPLE_TEXT, size=18)
 
             def open_picker(e):
                 def pick(cat):
                     def handler(e):
                         state["value"] = cat
                         label_text.value = cat
+                        label_icon.name = category_icon(cat)
                         page.pop_dialog()
                         page.update()
                     return handler
 
                 rows = [
                     ft.TextButton(
-                        content=ft.Container(content=ft.Text(c, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), width=220),
+                        content=ft.Container(
+                            content=ft.Row(
+                                [ft.Icon(category_icon(c), color=PURPLE_TEXT, size=18), ft.Text(c, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD)],
+                                spacing=10,
+                            ),
+                            width=220,
+                        ),
                         on_click=pick(c),
                     )
                     for c in CATEGORY_OPTIONS
@@ -902,7 +927,7 @@ async def build_ui(page: ft.Page):
 
             picker_btn = ft.ElevatedButton(
                 content=ft.Row(
-                    [label_text, ft.Icon(ft.Icons.ARROW_DROP_DOWN, color=PURPLE_TEXT)],
+                    [ft.Row([label_icon, label_text], spacing=8), ft.Icon(ft.Icons.ARROW_DROP_DOWN, color=PURPLE_TEXT)],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
                 on_click=open_picker,
@@ -1064,6 +1089,17 @@ async def build_ui(page: ft.Page):
         async def refresh_money_ui():
             mt_month_label.value = datetime.date(current_view_date["year"], current_view_date["month"], 1).strftime("%B %Y")
 
+            bounce_icon_containers = []
+
+            def bouncy_icon(cat, size=16, color="white"):
+                c = ft.Container(
+                    content=ft.Icon(category_icon(cat), size=size, color=color),
+                    scale=0,
+                    animate_scale=ft.Animation(600, ft.AnimationCurve.BOUNCE_OUT),
+                )
+                bounce_icon_containers.append(c)
+                return c
+
             transactions = await load_transactions()
             view_year = current_view_date["year"]
             view_month = current_view_date["month"]
@@ -1125,7 +1161,7 @@ async def build_ui(page: ft.Page):
                 mt_annual_category_list_view.controls = [
                     ft.Row(
                         [
-                            ft.Text(cat, color="white", size=13),
+                            ft.Row([bouncy_icon(cat), ft.Text(cat, color="white", size=13)], spacing=6),
                             ft.Text(f"{'+' if amt >= 0 else '-'}₦{abs(amt):,.2f}", color="#2E8B57" if amt >= 0 else "#C62828", size=13, weight=ft.FontWeight.BOLD),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -1178,7 +1214,7 @@ async def build_ui(page: ft.Page):
                 mt_category_list_view.controls = [
                     ft.Row(
                         [
-                            ft.Text(cat, color="white", size=13),
+                            ft.Row([bouncy_icon(cat), ft.Text(cat, color="white", size=13)], spacing=6),
                             ft.Text(f"{'+' if amt >= 0 else '-'}₦{abs(amt):,.2f}", color="#2E8B57" if amt >= 0 else "#C62828", size=13, weight=ft.FontWeight.BOLD),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -1211,6 +1247,7 @@ async def build_ui(page: ft.Page):
                     ft.Container(
                         content=ft.Row(
                             [
+                                bouncy_icon(t.get("category", "Other"), size=20),
                                 ft.Column(
                                     [
                                         ft.Text(t.get("note", "") or t["type"].capitalize(), weight=ft.FontWeight.BOLD, color="white", size=13),
@@ -1230,6 +1267,10 @@ async def build_ui(page: ft.Page):
                     )
                 )
             mt_transactions_list_view.controls = rows if rows else [ft.Text("No transactions this month. Tap a row to edit.", color=DARK_TEXT, size=12)]
+            page.update()
+            await asyncio.sleep(0.05)
+            for c in bounce_icon_containers:
+                c.scale = 1
             page.update()
 
         async def go_prev_month(e):
