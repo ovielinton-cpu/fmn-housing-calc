@@ -253,7 +253,7 @@ async def build_ui(page: ft.Page):
         )
 
         wave_hand = ft.Container(
-            content=ft.Text("👋", size=20),
+            content=ft.Text("🥰", size=20),
             rotate=0,
             animate_rotation=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT),
         )
@@ -1177,34 +1177,46 @@ async def build_ui(page: ft.Page):
             mt_annual_net.spans[1].text = f"₦{annual_net:,.2f}"
 
             if annual_category_totals:
-                annual_category_nets = {cat: v["income"] - v["expense"] for cat, v in annual_category_totals.items()}
-                sorted_annual_cats = sorted(annual_category_nets.items(), key=lambda kv: abs(kv[1]), reverse=True)
+                annual_entries = []
+                for cat, v in annual_category_totals.items():
+                    if v["income"] > 0:
+                        annual_entries.append((cat, "income", v["income"]))
+                    if v["expense"] > 0:
+                        annual_entries.append((cat, "expense", v["expense"]))
+                sorted_annual_cats = sorted(annual_entries, key=lambda x: x[2], reverse=True)
                 mt_annual_category_list_view.controls = [
                     ft.Row(
                         [
-                            ft.Row([bouncy_icon(cat), ft.Text(cat, color="white", size=13)], spacing=6),
-                            ft.Text(f"{'+' if amt >= 0 else '-'}₦{abs(amt):,.2f}", color="#2E8B57" if amt >= 0 else "#C62828", size=13, weight=ft.FontWeight.BOLD),
+                            ft.Row([bouncy_icon(cat), ft.Text(f"{cat} ({'Income' if kind == 'income' else 'Expense'})", color="white", size=13)], spacing=6),
+                            ft.Text(f"{'+' if kind == 'income' else '-'}₦{amt:,.2f}", color="#2E8B57" if kind == "income" else "#C62828", size=13, weight=ft.FontWeight.BOLD),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     )
-                    for cat, amt in sorted_annual_cats
+                    for cat, kind, amt in sorted_annual_cats
                 ]
             else:
                 mt_annual_category_list_view.controls = [ft.Text("No transactions this year yet.", color="white", size=12)]
 
-            # Build a per-category bar so the user can see where money actually goes,
-            # not just a single Income-vs-Expense total.
-            category_nets = {cat: v["income"] - v["expense"] for cat, v in category_totals.items()}
-            sorted_categories = sorted(category_nets.items(), key=lambda kv: abs(kv[1]), reverse=True)[:8]
+            # Build a per-category bar so the user can see where money actually goes.
+            # Income and expense on the SAME category are shown as separate bars,
+            # not netted together, so both flows stay visible.
+            category_entries = []
+            for cat, v in category_totals.items():
+                if v["income"] > 0:
+                    category_entries.append((cat, "income", v["income"]))
+                if v["expense"] > 0:
+                    category_entries.append((cat, "expense", v["expense"]))
+            sorted_categories = sorted(category_entries, key=lambda x: x[2], reverse=True)[:10]
 
             if sorted_categories:
                 max_bar_height = 150
-                max_abs = max((abs(v) for _, v in sorted_categories), default=1.0) or 1.0
+                max_abs = max((amt for _, _, amt in sorted_categories), default=1.0) or 1.0
 
                 category_units = []
-                for cat, net_amt in sorted_categories:
-                    bar_height = max(10, (abs(net_amt) / max_abs) * max_bar_height)
-                    bar_color = "#2E8B57" if net_amt >= 0 else "#C62828"
+                for cat, kind, amt in sorted_categories:
+                    bar_height = max(10, (amt / max_abs) * max_bar_height)
+                    bar_color = "#2E8B57" if kind == "income" else "#C62828"
+                    tag = "In" if kind == "income" else "Out"
                     category_units.append(
                         ft.Column(
                             [
@@ -1213,12 +1225,12 @@ async def build_ui(page: ft.Page):
                                     height=max_bar_height,
                                     alignment=ft.Alignment(0, 1),
                                 ),
-                                ft.Text(f"₦{abs(net_amt):,.0f}", size=10, color="white"),
-                                ft.Text(cat, size=11, color="white", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                                ft.Text(f"₦{amt:,.0f}", size=10, color="white"),
+                                ft.Text(f"{cat} ({tag})", size=10, color="white", weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
                             ],
                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                             spacing=4,
-                            width=70,
+                            width=72,
                         )
                     )
 
@@ -1231,16 +1243,22 @@ async def build_ui(page: ft.Page):
                 mt_chart_container.content = ft.Text("No transactions this month yet.", color="white", size=13, text_align=ft.TextAlign.CENTER)
 
             if category_totals:
-                sorted_cats_full = sorted(category_nets.items(), key=lambda kv: abs(kv[1]), reverse=True)
+                list_entries = []
+                for cat, v in category_totals.items():
+                    if v["income"] > 0:
+                        list_entries.append((cat, "income", v["income"]))
+                    if v["expense"] > 0:
+                        list_entries.append((cat, "expense", v["expense"]))
+                sorted_cats_full = sorted(list_entries, key=lambda x: x[2], reverse=True)
                 mt_category_list_view.controls = [
                     ft.Row(
                         [
-                            ft.Row([bouncy_icon(cat), ft.Text(cat, color="white", size=13)], spacing=6),
-                            ft.Text(f"{'+' if amt >= 0 else '-'}₦{abs(amt):,.2f}", color="#2E8B57" if amt >= 0 else "#C62828", size=13, weight=ft.FontWeight.BOLD),
+                            ft.Row([bouncy_icon(cat), ft.Text(f"{cat} ({'Income' if kind == 'income' else 'Expense'})", color="white", size=13)], spacing=6),
+                            ft.Text(f"{'+' if kind == 'income' else '-'}₦{amt:,.2f}", color="#2E8B57" if kind == "income" else "#C62828", size=13, weight=ft.FontWeight.BOLD),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     )
-                    for cat, amt in sorted_cats_full
+                    for cat, kind, amt in sorted_cats_full
                 ]
             else:
                 mt_category_list_view.controls = [ft.Text("No transactions this month yet.", color="white", size=12)]
