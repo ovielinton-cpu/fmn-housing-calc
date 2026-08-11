@@ -1344,14 +1344,20 @@ async def build_ui(page: ft.Page):
         mt_export_row = ft.Row(
             [
                 ft.ElevatedButton(
-                    content=ft.Text("Export Month (PDF)", size=12, weight=ft.FontWeight.BOLD, color="#4B0082"),
+                    content=ft.Row(
+                        [ft.Icon(ft.Icons.PICTURE_AS_PDF_ROUNDED, size=16, color="white"), ft.Text("Export Month", size=12, weight=ft.FontWeight.BOLD, color="white")],
+                        spacing=4, tight=True,
+                    ),
                     on_click=export_month_pdf,
-                    style=ft.ButtonStyle(bgcolor="#FFD700"),
+                    style=ft.ButtonStyle(bgcolor="#C62828", elevation=10, shadow_color="#4B0082"),
                 ),
                 ft.ElevatedButton(
-                    content=ft.Text("Export Year (PDF)", size=12, weight=ft.FontWeight.BOLD, color="#4B0082"),
+                    content=ft.Row(
+                        [ft.Icon(ft.Icons.PICTURE_AS_PDF_ROUNDED, size=16, color="white"), ft.Text("Export Year", size=12, weight=ft.FontWeight.BOLD, color="white")],
+                        spacing=4, tight=True,
+                    ),
                     on_click=export_year_pdf,
-                    style=ft.ButtonStyle(bgcolor="#FFD700"),
+                    style=ft.ButtonStyle(bgcolor="#C62828", elevation=10, shadow_color="#4B0082"),
                 ),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
