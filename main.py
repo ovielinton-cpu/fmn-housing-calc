@@ -766,6 +766,23 @@ async def build_ui(page: ft.Page):
         async def save_transactions(transactions):
             await page.shared_preferences.set("money_transactions", json.dumps(transactions))
 
+        def show_undo_snackbar(deleted_entry):
+            async def handle_undo(e):
+                full = await load_transactions()
+                full.insert(0, deleted_entry)
+                await save_transactions(full)
+                await refresh_money_ui()
+
+            page.show_dialog(
+                ft.SnackBar(
+                    ft.Text("Transaction deleted", color="white"),
+                    action="Undo",
+                    on_action=handle_undo,
+                    duration=ft.Duration(seconds=5),
+                    bgcolor=PURPLE_TEXT,
+                )
+            )
+
         # -------------------- PDF LOG BOOK EXPORT --------------------
         def build_transactions_pdf_bytes(title, txn_list):
             pdf = FPDF()
@@ -1054,11 +1071,15 @@ async def build_ui(page: ft.Page):
 
             async def delete_from_edit(e):
                 full = await load_transactions()
+                deleted_entry = None
                 if 0 <= actual_idx < len(full):
+                    deleted_entry = full[actual_idx]
                     del full[actual_idx]
                 await save_transactions(full)
                 page.pop_dialog()
                 await refresh_money_ui()
+                if deleted_entry:
+                    show_undo_snackbar(deleted_entry)
 
             edit_dialog = ft.AlertDialog(
                 modal=True,
@@ -1227,11 +1248,15 @@ async def build_ui(page: ft.Page):
             def make_delete(actual_idx):
                 async def _delete(e):
                     full = await load_transactions()
+                    deleted_entry = None
                     if 0 <= actual_idx < len(full):
+                        deleted_entry = full[actual_idx]
                         del full[actual_idx]
                     await save_transactions(full)
                     await refresh_money_ui()
                     page.update()
+                    if deleted_entry:
+                        show_undo_snackbar(deleted_entry)
                 return _delete
 
             def make_row_click(actual_idx, entry):
