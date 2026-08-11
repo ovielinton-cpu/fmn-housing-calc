@@ -1268,7 +1268,7 @@ async def build_ui(page: ft.Page):
                 )
             mt_transactions_list_view.controls = rows if rows else [ft.Text("No transactions this month. Tap a row to edit.", color=DARK_TEXT, size=12)]
             page.update()
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.25)
             for c in bounce_icon_containers:
                 c.scale = 1
             page.update()
