@@ -875,6 +875,109 @@ async def build_ui(page: ft.Page):
             mt_status_text.value = "Annual log saved!" if file_path else "Save cancelled."
             page.update()
 
+        # -------------------- BACKUP & RESTORE --------------------
+        backup_status_text = ft.Text("", color="white", size=12, text_align=ft.TextAlign.CENTER)
+
+        async def backup_data(e):
+            try:
+                raw = await page.shared_preferences.get("money_transactions")
+                money_transactions = json.loads(raw) if raw else []
+            except Exception:
+                money_transactions = []
+
+            try:
+                saved_username = await page.shared_preferences.get("user_name")
+            except Exception:
+                saved_username = ""
+
+            backup_obj = {
+                "app": "Naira Finance Hub",
+                "backup_version": 1,
+                "created": datetime.datetime.now().isoformat(),
+                "money_transactions": money_transactions,
+                "user_name": saved_username or "",
+            }
+            backup_bytes = json.dumps(backup_obj, indent=2).encode("utf-8")
+
+            file_path = await pdf_file_picker.save_file(
+                dialog_title="Save Backup File",
+                file_name=f"NairaFinanceHub_Backup_{datetime.date.today().isoformat()}.json",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+                src_bytes=backup_bytes,
+            )
+            backup_status_text.value = "Backup saved! Keep this file somewhere safe." if file_path else "Backup cancelled."
+            page.update()
+
+        async def restore_data(e):
+            result = await pdf_file_picker.pick_files(
+                dialog_title="Select Backup File to Restore",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["json"],
+                allow_multiple=False,
+                with_data=True,
+            )
+            files = getattr(result, "files", result)
+            if not files:
+                backup_status_text.value = "Restore cancelled."
+                page.update()
+                return
+
+            picked = files[0]
+            if not getattr(picked, "bytes", None):
+                backup_status_text.value = "Could not read that file. Please try again."
+                page.update()
+                return
+
+            try:
+                backup_obj = json.loads(picked.bytes.decode("utf-8"))
+                restored_transactions = backup_obj.get("money_transactions", [])
+                await page.shared_preferences.set("money_transactions", json.dumps(restored_transactions))
+                if backup_obj.get("user_name"):
+                    await page.shared_preferences.set("user_name", backup_obj["user_name"])
+                backup_status_text.value = "Backup restored! Your transactions are back."
+                await refresh_money_ui()
+                page.update()
+            except Exception:
+                backup_status_text.value = "That doesn't look like a valid backup file."
+                page.update()
+
+        def show_backup_help(e):
+            dlg = ft.AlertDialog(
+                modal=True,
+                bgcolor="#FFFFFF",
+                title=ft.Text("Backup & Restore — How It Works", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text(
+                                "This app has no login or account — everything lives only on this phone. Backup & Restore lets you keep a safe copy so nothing is lost.",
+                                color=DARK_TEXT, size=13
+                            ),
+                            ft.Text("📤 Backup", weight=ft.FontWeight.BOLD, color=PURPLE_TEXT, size=13),
+                            ft.Text(
+                                "Tap 'Backup Data' to save all your transactions into one file. Choose where to save it — Downloads, Google Drive, or email it to yourself.",
+                                color=DARK_TEXT, size=12
+                            ),
+                            ft.Text("📥 Restore", weight=ft.FontWeight.BOLD, color=PURPLE_TEXT, size=13),
+                            ft.Text(
+                                "On a new phone, or after reinstalling the app, tap 'Restore Data' and select your saved backup file. Your transactions will load right back in.",
+                                color=DARK_TEXT, size=12
+                            ),
+                            ft.Text(
+                                "⚠ Back up regularly, and keep the file somewhere safe. If the file is lost, the data inside it cannot be recovered.",
+                                color="#C62828", size=12, weight=ft.FontWeight.BOLD
+                            ),
+                        ],
+                        scroll=ft.ScrollMode.AUTO, spacing=10, tight=True,
+                    ),
+                    width=300, height=380,
+                ),
+                actions=[ft.TextButton("Got it", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT))],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            page.show_dialog(dlg)
+
         today = datetime.date.today()
         current_view_date = {"year": today.year, "month": today.month}
 
@@ -1366,7 +1469,7 @@ async def build_ui(page: ft.Page):
             }
             transactions = await load_transactions()
             transactions.insert(0, entry)
-            transactions = transactions[:500]
+            transactions = transactions[:10000]
             await save_transactions(transactions)
             mt_amount_input.value = ""
             mt_note_input.value = ""
@@ -1449,6 +1552,31 @@ async def build_ui(page: ft.Page):
             wrap=True,
         )
 
+        mt_backup_row = ft.Row(
+            [
+                ft.ElevatedButton(
+                    content=ft.Row(
+                        [ft.Icon(ft.Icons.BACKUP_ROUNDED, size=16, color="white"), ft.Text("Backup Data", size=12, weight=ft.FontWeight.BOLD, color="white")],
+                        spacing=4, tight=True,
+                    ),
+                    on_click=backup_data,
+                    style=ft.ButtonStyle(bgcolor="#1E88E5"),
+                ),
+                ft.ElevatedButton(
+                    content=ft.Row(
+                        [ft.Icon(ft.Icons.RESTORE_ROUNDED, size=16, color="white"), ft.Text("Restore Data", size=12, weight=ft.FontWeight.BOLD, color="white")],
+                        spacing=4, tight=True,
+                    ),
+                    on_click=restore_data,
+                    style=ft.ButtonStyle(bgcolor="#1E88E5"),
+                ),
+                ft.IconButton(icon=ft.Icons.HELP_OUTLINE_ROUNDED, icon_color="white", on_click=show_backup_help, tooltip="How does this work?"),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=10,
+            wrap=True,
+        )
+
         mt_chart_card = ft.Container(
             content=mt_chart_container,
             padding=10, border_radius=15,
@@ -1482,6 +1610,7 @@ async def build_ui(page: ft.Page):
                 mt_summary_container, ft.Container(height=10),
                 mt_annual_container, ft.Container(height=10),
                 mt_export_row, ft.Container(height=10),
+                mt_backup_row, backup_status_text, ft.Container(height=10),
                 mt_chart_card, ft.Container(height=10),
                 mt_category_card, ft.Container(height=10),
                 mt_list_card,
