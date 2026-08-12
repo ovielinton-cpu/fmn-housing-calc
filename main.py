@@ -220,8 +220,118 @@ async def build_ui(page: ft.Page):
         )
         page.update()
 
+    TUTORIAL_SLIDES = [
+        {
+            "icon": ft.Icons.HOME_ROUNDED,
+            "icon_color": "#FF8C00",
+            "title": "Housing Upfront",
+            "text": "Calculate your housing upfront payment based on your basic salary, any increment, and your organization's rate — plus see your equivalent monthly housing allowance.",
+        },
+        {
+            "icon": ft.Icons.WORK_ROUNDED,
+            "icon_color": "#E53935",
+            "title": "Salary Management",
+            "text": "Get a full payslip breakdown — Gross Pay, Pension, NHF, and PAYE tax — using the current Nigeria Tax Act 2025 bands. Save calculations to compare over time.",
+        },
+        {
+            "icon": ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED,
+            "icon_color": "#1E88E5",
+            "title": "Money Tracker",
+            "text": "Log income and expenses by category, set monthly budgets, view charts and trends, export a PDF log book, and back up your data — all stored only on your device.",
+        },
+    ]
+
+    def show_tutorial_screen():
+        slide_index = {"value": 0}
+        slide_icon = ft.Icon(TUTORIAL_SLIDES[0]["icon"], size=70, color=TUTORIAL_SLIDES[0]["icon_color"])
+        slide_title = ft.Text(TUTORIAL_SLIDES[0]["title"], size=22, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)
+        slide_text = ft.Text(TUTORIAL_SLIDES[0]["text"], size=14, color="white", text_align=ft.TextAlign.CENTER)
+        dots_row = ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=8)
+        next_btn_text = ft.Text("Next", weight=ft.FontWeight.BOLD, color="#4B0082")
+
+        def build_dots():
+            dots_row.controls = [
+                ft.Container(
+                    width=9, height=9, border_radius=5,
+                    bgcolor="#FFD700" if i == slide_index["value"] else ft.Colors.with_opacity(0.3, ft.Colors.WHITE),
+                )
+                for i in range(len(TUTORIAL_SLIDES))
+            ]
+
+        def render_slide():
+            s = TUTORIAL_SLIDES[slide_index["value"]]
+            slide_icon.name = s["icon"]
+            slide_icon.color = s["icon_color"]
+            slide_title.value = s["title"]
+            slide_text.value = s["text"]
+            next_btn_text.value = "Get Started" if slide_index["value"] == len(TUTORIAL_SLIDES) - 1 else "Next"
+            build_dots()
+            page.update()
+
+        async def finish_tutorial(e=None):
+            await page.shared_preferences.set("tutorial_seen", True)
+            await check_name()
+
+        async def go_next(e):
+            if slide_index["value"] < len(TUTORIAL_SLIDES) - 1:
+                slide_index["value"] += 1
+                render_slide()
+            else:
+                await finish_tutorial()
+
+        async def skip_tutorial(e):
+            await finish_tutorial()
+
+        build_dots()
+
+        page.controls.clear()
+        page.bgcolor = "#4B0082"
+        page.add(
+            ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Container(height=20),
+                        slide_icon,
+                        ft.Container(height=10),
+                        slide_title,
+                        ft.Container(height=10),
+                        ft.Container(content=slide_text, padding=ft.Padding(left=20, right=20, top=0, bottom=0)),
+                        ft.Container(height=20),
+                        dots_row,
+                        ft.Container(height=30),
+                        ft.ElevatedButton(
+                            content=next_btn_text,
+                            on_click=go_next,
+                            style=ft.ButtonStyle(bgcolor="#FFD700"),
+                            width=200,
+                        ),
+                        ft.TextButton(
+                            content=ft.Text("Skip", color="white"),
+                            on_click=skip_tutorial,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=4,
+                ),
+                padding=20,
+                alignment=ft.Alignment(0, 0),
+                expand=True,
+            )
+        )
+        page.update()
+
     async def check_name():
         try:
+            try:
+                tutorial_seen = await page.shared_preferences.get("tutorial_seen")
+            except Exception:
+                tutorial_seen = False
+
+            if not tutorial_seen:
+                show_tutorial_screen()
+                return
+
             existing_name = await page.shared_preferences.get("user_name")
             if not existing_name:
                 open_name_dialog()
@@ -288,6 +398,12 @@ async def build_ui(page: ft.Page):
                             wrap=True,
                         ),
                         expand=True,
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.HELP_OUTLINE_ROUNDED,
+                        icon_color="#FFD700",
+                        tooltip="Replay tutorial",
+                        on_click=lambda e: show_tutorial_screen(),
                     ),
                 ],
                 alignment=ft.MainAxisAlignment.START,
@@ -766,6 +882,71 @@ async def build_ui(page: ft.Page):
         async def save_transactions(transactions):
             await page.shared_preferences.set("money_transactions", json.dumps(transactions))
 
+        # -------------------- CATEGORY BUDGETS --------------------
+        async def load_budgets():
+            try:
+                raw = await page.shared_preferences.get("category_budgets")
+                return json.loads(raw) if raw else {}
+            except Exception:
+                return {}
+
+        async def save_budgets(budgets):
+            await page.shared_preferences.set("category_budgets", json.dumps(budgets))
+
+        def open_budget_dialog():
+            budget_category_picker, budget_category_state = build_category_picker("Food")
+            budget_amount_input = ft.TextField(
+                keyboard_type=ft.KeyboardType.NUMBER,
+                bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+                text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                hint_text="e.g. 50000",
+            )
+            budget_error_text = ft.Text("", color="red", size=12)
+
+            async def save_budget(e):
+                try:
+                    amount = float(budget_amount_input.value)
+                except (ValueError, TypeError):
+                    budget_error_text.value = "Enter a valid amount."
+                    page.update()
+                    return
+                budgets = await load_budgets()
+                budgets[budget_category_state["value"]] = amount
+                await save_budgets(budgets)
+                page.pop_dialog()
+                await refresh_money_ui()
+
+            async def remove_budget(e):
+                budgets = await load_budgets()
+                budgets.pop(budget_category_state["value"], None)
+                await save_budgets(budgets)
+                page.pop_dialog()
+                await refresh_money_ui()
+
+            dlg = ft.AlertDialog(
+                modal=True,
+                bgcolor="#FFFFFF",
+                title=ft.Text("Set Monthly Budget", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text("Set a monthly spending limit for a category. You'll get a visual warning as you approach or exceed it.", color=DARK_TEXT, size=12),
+                            field_with_caption("Category", budget_category_picker),
+                            field_with_caption("Monthly Limit (₦)", budget_amount_input),
+                            budget_error_text,
+                        ],
+                        tight=True, spacing=15, scroll=ft.ScrollMode.AUTO,
+                    ),
+                    width=300, height=320,
+                ),
+                actions=[
+                    ft.TextButton("Remove Budget", on_click=remove_budget, style=ft.ButtonStyle(color="#C62828")),
+                    ft.TextButton("Save", on_click=save_budget, style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            page.show_dialog(dlg)
+
         def show_undo_snackbar(deleted_entry):
             async def handle_undo(e):
                 full = await load_transactions()
@@ -946,7 +1127,7 @@ async def build_ui(page: ft.Page):
             dlg = ft.AlertDialog(
                 modal=True,
                 bgcolor="#FFFFFF",
-                title=ft.Text("Backup & Restore — How It Works", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                title=ft.Text("Backup & Restore — How It Works", color="#C62828", weight=ft.FontWeight.BOLD),
                 content=ft.Container(
                     content=ft.Column(
                         [
@@ -954,12 +1135,12 @@ async def build_ui(page: ft.Page):
                                 "This app has no login or account — everything lives only on this phone. Backup & Restore lets you keep a safe copy so nothing is lost.",
                                 color=DARK_TEXT, size=13
                             ),
-                            ft.Text("📤 Backup", weight=ft.FontWeight.BOLD, color=PURPLE_TEXT, size=13),
+                            ft.Text("📤 Backup", weight=ft.FontWeight.BOLD, color="#C62828", size=13),
                             ft.Text(
                                 "Tap 'Backup Data' to save all your transactions into one file. Choose where to save it — Downloads, Google Drive, or email it to yourself.",
                                 color=DARK_TEXT, size=12
                             ),
-                            ft.Text("📥 Restore", weight=ft.FontWeight.BOLD, color=PURPLE_TEXT, size=13),
+                            ft.Text("📥 Restore", weight=ft.FontWeight.BOLD, color="#C62828", size=13),
                             ft.Text(
                                 "On a new phone, or after reinstalling the app, tap 'Restore Data' and select your saved backup file. Your transactions will load right back in.",
                                 color=DARK_TEXT, size=12
@@ -1106,6 +1287,20 @@ async def build_ui(page: ft.Page):
         mt_chart_container = ft.Container(padding=10, alignment=ft.Alignment(0, 0))
         mt_category_list_view = ft.Column([], spacing=6)
         mt_transactions_list_view = ft.ListView(controls=[], spacing=8, height=260)
+        mt_search_query = {"value": ""}
+
+        async def on_search_change(e):
+            mt_search_query["value"] = (mt_search_input.value or "").strip().lower()
+            await refresh_money_ui()
+
+        mt_search_input = ft.TextField(
+            hint_text="Search by note or category...",
+            bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+            text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+            prefix_icon=ft.Icons.SEARCH_ROUNDED,
+            on_change=on_search_change,
+        )
+
 
         def open_edit_dialog(actual_idx, entry):
             edit_type_row, edit_type_state = build_type_toggle(entry.get("type", "expense"))
@@ -1353,7 +1548,7 @@ async def build_ui(page: ft.Page):
                     if v["expense"] > 0:
                         list_entries.append((cat, "expense", v["expense"]))
                 sorted_cats_full = sorted(list_entries, key=lambda x: x[2], reverse=True)
-                mt_category_list_view.controls = [
+                category_rows = [
                     ft.Row(
                         [
                             ft.Row([bouncy_icon(cat), ft.Text(f"{cat} ({'Income' if kind == 'income' else 'Expense'})", color="white", size=13)], spacing=6),
@@ -1363,6 +1558,45 @@ async def build_ui(page: ft.Page):
                     )
                     for cat, kind, amt in sorted_cats_full
                 ]
+
+                budgets = await load_budgets()
+                if budgets:
+                    budget_rows = []
+                    for cat, limit in budgets.items():
+                        spent = category_totals.get(cat, {}).get("expense", 0.0)
+                        pct = (spent / limit * 100.0) if limit > 0 else 0.0
+                        if pct >= 100:
+                            status_color = "#C62828"
+                            status_text = f"Over budget! ₦{spent:,.0f} of ₦{limit:,.0f}"
+                        elif pct >= 80:
+                            status_color = "#FF8C00"
+                            status_text = f"{pct:.0f}% used — ₦{spent:,.0f} of ₦{limit:,.0f}"
+                        else:
+                            status_color = "#2E8B57"
+                            status_text = f"{pct:.0f}% used — ₦{spent:,.0f} of ₦{limit:,.0f}"
+                        budget_rows.append(
+                            ft.Column(
+                                [
+                                    ft.Row([bouncy_icon(cat), ft.Text(f"{cat} Budget", color="white", size=12, weight=ft.FontWeight.BOLD)], spacing=6),
+                                    ft.Container(
+                                        content=ft.Container(
+                                            width=min(pct, 100) * 2.2,
+                                            height=8,
+                                            bgcolor=status_color,
+                                            border_radius=4,
+                                        ),
+                                        width=220, height=8, bgcolor=ft.Colors.with_opacity(0.2, ft.Colors.WHITE), border_radius=4,
+                                    ),
+                                    ft.Text(status_text, color=status_color, size=11, weight=ft.FontWeight.BOLD),
+                                ],
+                                spacing=4,
+                            )
+                        )
+                    category_rows.append(ft.Divider(height=1, color="#4B0082"))
+                    category_rows.append(ft.Text("Budgets", color="white", weight=ft.FontWeight.BOLD, size=13))
+                    category_rows.extend(budget_rows)
+
+                mt_category_list_view.controls = category_rows
             else:
                 mt_category_list_view.controls = [ft.Text("No transactions this month yet.", color="white", size=12)]
 
@@ -1385,8 +1619,17 @@ async def build_ui(page: ft.Page):
                     open_edit_dialog(actual_idx, entry)
                 return _click
 
+            search_q = mt_search_query["value"]
+            if search_q:
+                display_filtered = [
+                    (idx, t) for idx, t in filtered
+                    if search_q in (t.get("note", "") or "").lower() or search_q in (t.get("category", "") or "").lower()
+                ]
+            else:
+                display_filtered = filtered
+
             rows = []
-            for actual_idx, t in filtered[:30]:
+            for actual_idx, t in display_filtered[:30]:
                 color = "#2E8B57" if t["type"] == "income" else "#C62828"
                 sign = "+" if t["type"] == "income" else "-"
                 rows.append(
@@ -1412,7 +1655,12 @@ async def build_ui(page: ft.Page):
                         ink=True,
                     )
                 )
-            mt_transactions_list_view.controls = rows if rows else [ft.Text("No transactions this month. Tap a row to edit.", color=DARK_TEXT, size=12)]
+            if rows:
+                mt_transactions_list_view.controls = rows
+            elif search_q:
+                mt_transactions_list_view.controls = [ft.Text(f"No results for '{mt_search_input.value}'.", color=DARK_TEXT, size=12)]
+            else:
+                mt_transactions_list_view.controls = [ft.Text("No transactions this month. Tap a row to edit.", color=DARK_TEXT, size=12)]
             page.update()
             await asyncio.sleep(0.25)
             for c in bounce_icon_containers:
@@ -1570,7 +1818,7 @@ async def build_ui(page: ft.Page):
                     on_click=restore_data,
                     style=ft.ButtonStyle(bgcolor="#1E88E5"),
                 ),
-                ft.IconButton(icon=ft.Icons.HELP_OUTLINE_ROUNDED, icon_color="white", on_click=show_backup_help, tooltip="How does this work?"),
+                ft.IconButton(icon=ft.Icons.HELP_OUTLINE_ROUNDED, icon_color="#C62828", on_click=show_backup_help, tooltip="How does this work?"),
             ],
             alignment=ft.MainAxisAlignment.CENTER,
             spacing=10,
@@ -1585,7 +1833,19 @@ async def build_ui(page: ft.Page):
 
         mt_category_card = ft.Container(
             content=ft.Column(
-                [ft.Text("By Category (Net)", color="white", weight=ft.FontWeight.BOLD, size=14), mt_category_list_view],
+                [
+                    ft.Row(
+                        [
+                            ft.Text("By Category (Net)", color="white", weight=ft.FontWeight.BOLD, size=14),
+                            ft.TextButton(
+                                content=ft.Text("Set Budget", color="#FFD700", weight=ft.FontWeight.BOLD, size=12),
+                                on_click=lambda e: open_budget_dialog(),
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    mt_category_list_view,
+                ],
                 spacing=8,
             ),
             padding=15, border_radius=15,
@@ -1594,7 +1854,7 @@ async def build_ui(page: ft.Page):
 
         mt_list_card = ft.Container(
             content=ft.Column(
-                [ft.Text("Transactions (tap to edit)", color="white", weight=ft.FontWeight.BOLD, size=14), mt_transactions_list_view],
+                [ft.Text("Transactions (tap to edit)", color="white", weight=ft.FontWeight.BOLD, size=14), mt_search_input, mt_transactions_list_view],
                 spacing=8,
             ),
             padding=15, border_radius=15,
@@ -1860,9 +2120,3 @@ async def main(page: ft.Page):
                 ),
                 padding=20,
                 expand=True,
-            )
-        )
-        page.update()
-
-if __name__ == "__main__":
-    ft.run(main)
