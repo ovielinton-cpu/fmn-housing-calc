@@ -1,0 +1,4 @@
+flet==0.83.0
+flet-ads
+flet-audio
+fpdf2
