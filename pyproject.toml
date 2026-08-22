@@ -1,7 +1,7 @@
 [project]
 name = "naira-finance-hub"
 version = "1.0.0"
-description = "An all-in-one financial tool for Nigerian staff: housing upfront calculator, salary/PAYE breakdown, and personal money tracker."
+description = "An all-in-one financial tool for Nigerian staff: housing upfront calculator, salary/PAYE breakdown, personal money tracker, and Ajo (rotating savings group) manager."
 
 [tool.flet]
 product = "Naira Finance Hub"
