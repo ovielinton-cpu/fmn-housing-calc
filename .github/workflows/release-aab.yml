@@ -1,0 +1,42 @@
+name: Build Signed AAB (Play Store)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-aab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Flet and dependencies
+        run: pip install flet==0.83.0 flet-ads flet-audio fpdf2
+
+      - name: Decode keystore from secret
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > upload-keystore.jks
+
+      - name: Build signed AAB
+        run: |
+          flet build aab \
+            --android-signing-key-store upload-keystore.jks \
+            --android-signing-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --android-signing-key-store-password "${{ secrets.KEYSTORE_PASSWORD }}" \
+            --android-signing-key-password "${{ secrets.KEY_PASSWORD }}"
+
+      - name: Upload signed AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: build/aab/**/*.aab
