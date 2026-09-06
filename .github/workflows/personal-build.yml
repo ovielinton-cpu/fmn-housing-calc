@@ -18,19 +18,14 @@ jobs:
       - name: Install Flet
         run: pip install flet
 
-      - name: Build base app (generates build/flutter)
-        run: flet build apk --yes
-
-      - name: Patch in notification capture
-        run: python android_native/patch_android_project.py --project-root build/flutter
-
-      - name: Rebuild via Flet (reuses existing build/flutter, keeps the patch)
-        run: flet build apk --yes
+      - name: Build app with notification-capture template
+        run: >
+          flet build apk --yes
+          --template https://github.com/ovielinton-cpu/flet-android-template
+          --template-ref main
 
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
           name: personal-build-apk
-          path: |
-            build/apk/*.apk
-            build/flutter/build/app/outputs/flutter-apk/*.apk
+          path: build/apk/*.apk
