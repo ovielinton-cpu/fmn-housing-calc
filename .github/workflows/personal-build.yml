@@ -1,7 +1,7 @@
 name: Personal Build (with notification capture)
 
 on:
-  workflow_dispatch:   # gives you a manual "Run workflow" button
+  workflow_dispatch:
 
 jobs:
   build:
@@ -20,6 +20,12 @@ jobs:
 
       - name: Build base app (generates build/flutter)
         run: flet build apk --yes
+
+      - name: Locate packaged Python site-packages
+        run: |
+          PYSITE=$(find /tmp -maxdepth 2 -type d -iname '__pypackages__' 2>/dev/null | head -n1)
+          echo "Found: $PYSITE"
+          echo "SERIOUS_PYTHON_SITE_PACKAGES=$PYSITE" >> "$GITHUB_ENV"
 
       - name: Patch in notification capture
         run: python android_native/patch_android_project.py --project-root build/flutter
