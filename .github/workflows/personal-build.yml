@@ -21,21 +21,16 @@ jobs:
       - name: Build base app (generates build/flutter)
         run: flet build apk --yes
 
-      - name: Locate packaged Python site-packages
-        run: |
-          PYSITE=$(find /tmp -maxdepth 2 -type d -iname '__pypackages__' 2>/dev/null | head -n1)
-          echo "Found: $PYSITE"
-          echo "SERIOUS_PYTHON_SITE_PACKAGES=$PYSITE" >> "$GITHUB_ENV"
-
       - name: Patch in notification capture
         run: python android_native/patch_android_project.py --project-root build/flutter
 
-      - name: Rebuild with the patch included
-        working-directory: build/flutter
-        run: flutter build apk --release
+      - name: Rebuild via Flet (reuses existing build/flutter, keeps the patch)
+        run: flet build apk --yes
 
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
           name: personal-build-apk
-          path: build/flutter/build/app/outputs/flutter-apk/app-release.apk
+          path: |
+            build/apk/*.apk
+            build/flutter/build/app/outputs/flutter-apk/*.apk
