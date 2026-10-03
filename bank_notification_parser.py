@@ -26,3 +26,179 @@ separate "Txn:DR/CR" field (UBA) or attached directly to the amount as
 the older generic keyword-based guessing kept as a fallback for any other
 bank/fintech that shows up later with an unrecognized format.
 """
+import re
+from dataclasses import dataclass, asdict
+from typing import Optional
+
+# --- Generic fallback vocabulary (used only if neither bank-specific
+# pattern below matches) ---
+CREDIT_WORDS = ("credited", "received", "credit alert", "inflow", "deposit")
+DEBIT_WORDS = ("debited", "debit alert", "purchase", "withdrawal", "transfer to",
+               "spent", "payment of", "sent")
+GENERIC_AMOUNT_RE = re.compile(r"(?:NGN|N|₦)\s?([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)", re.IGNORECASE)
+
+# --- UBA-style: "Txn:DR" / "Txn:CR" as its own field ---
+UBA_TXN_TYPE_RE = re.compile(r"Txn\s*:\s*(DR|CR)\b", re.IGNORECASE)
+
+# --- FCMB-style: direction attached directly to the amount label ---
+FCMB_TXN_TYPE_RE = re.compile(r"\b(Dr|Cr)\s*Amt\s*:", re.IGNORECASE)
+
+# --- Shared across both: amount always follows "Amt:", balance always
+# follows "Bal:"/"BAL:" ---
+AMOUNT_AFTER_AMT_RE = re.compile(r"Amt\s*:\s*(?:NGN|N|₦)?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)", re.IGNORECASE)
+BALANCE_RE = re.compile(r"\bBal(?:ance)?\s*:?\s*(?:NGN|N|₦)?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)", re.IGNORECASE)
+
+# --- Narration: "Des:"/"DESC:" up to the next known field label ---
+NARRATION_RE = re.compile(
+    r"Des(?:c)?\s*:\s*(.*?)(?:\s*(?:Date|DT|Bal|BAL)\s*:|$)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+FROM_RE = re.compile(r"\bfrom\s+([A-Za-z0-9 .'\-]{2,40})", re.IGNORECASE)
+TO_RE = re.compile(r"\bto\s+([A-Za-z0-9 .'\-]{2,40})", re.IGNORECASE)
+
+
+@dataclass
+class Transaction:
+    package: str
+    direction: str          # "credit", "debit", or "unknown"
+    amount: Optional[float]
+    currency: str
+    counterparty: Optional[str]
+    balance_after: Optional[float]
+    raw_text: str
+    posted_at: int
+    strict: bool = False          # True only when a known bank format matched (safe to auto-add)
+    category_hints: tuple = ()    # best-guess categories, most likely first
+
+    def to_dict(self):
+        return asdict(self)
+
+
+# Optional per-package overrides for anything a future bank's format needs
+# handled completely differently from everything above.
+BANK_PATTERNS: dict = {}
+
+
+def _to_float(num_str: str) -> float:
+    return float(num_str.replace(",", ""))
+
+
+def _parse_direction(text: str) -> str:
+    m = UBA_TXN_TYPE_RE.search(text)
+    if m:
+        return "credit" if m.group(1).upper() == "CR" else "debit"
+
+    m = FCMB_TXN_TYPE_RE.search(text)
+    if m:
+        return "credit" if m.group(1).upper() == "CR" else "debit"
+
+    lowered = text.lower()
+    if any(w in lowered for w in CREDIT_WORDS):
+        return "credit"
+    if any(w in lowered for w in DEBIT_WORDS):
+        return "debit"
+    return "unknown"
+
+
+def _parse_amount(text: str) -> Optional[float]:
+    m = AMOUNT_AFTER_AMT_RE.search(text)
+    if m:
+        return _to_float(m.group(1))
+    m = GENERIC_AMOUNT_RE.search(text)
+    return _to_float(m.group(1)) if m else None
+
+
+def _parse_balance(text: str) -> Optional[float]:
+    m = BALANCE_RE.search(text)
+    return _to_float(m.group(1)) if m else None
+
+
+def _parse_narration(text: str, direction: str) -> Optional[str]:
+    m = NARRATION_RE.search(text)
+    if m:
+        narration = m.group(1).strip().strip("|").strip()
+        if narration:
+            return narration[:80]
+
+    # Fallback for other banks' plain-English wording, e.g. "from JOHN DOE"
+    pattern = FROM_RE if direction == "credit" else TO_RE
+    m = pattern.search(text)
+    if m:
+        return m.group(1).strip().rstrip(".")
+    m = (TO_RE if pattern is FROM_RE else FROM_RE).search(text)
+    return m.group(1).strip().rstrip(".") if m else None
+
+
+# Narration keyword -> category. Checked in order; first match wins. Each rule lists
+# category names to try, so a custom category you created (e.g. "Airtime") is used
+# before the built-in fallback.
+CATEGORY_RULES = [
+    # (applies_to, keywords, categories to try)
+    ("credit", ("SALARY", "PAYROLL", "WAGES", "NEFT", "SAL ADV", "STAFF PAY"), ("Salary",)),
+    ("any", ("FASTCASH", "LOAN", "RPMT", "REPAYMENT", "DISBURS"), ("Loan", "Borrowed")),
+    ("any", ("SMS ALERT", "SMS CHG", "SMS CHARGE", "STAMP DUTY", "VAT", "COMMISSION",
+             "MAINT", "LEVY", " FEE", "CHARGE", "CHG"), ("Fee",)),
+    ("debit", ("TOPUP", "TOP UP", "TOP-UP", "AIRTIME", "RECHARGE", "VTU", "DATA BUNDLE",
+               "MTN", "GLO", "AIRTEL", "9MOBILE"), ("Airtime", "Phone", "Utilities")),
+    ("debit", ("DSTV", "GOTV", "STARTIMES", "IKEDC", "EKEDC", "AEDC", "PHCN", "ELECTRIC",
+               "PREPAID", "WATER", "NEPA"), ("Utilities",)),
+    ("debit", ("UBER", "BOLT", "TAXI", "FUEL", "PETROL", "FILLING", "TOLL", "TRANSPORT",
+               "TOTALENERGIES", "MOBIL", "CONOIL", "NNPC"), ("Transport",)),
+    ("debit", ("RESTAURANT", "EATERY", "KITCHEN", "CHICKEN", "FOOD", "SHOPRITE", "SPAR",
+               "SUPERMARKET", "MART", "BAKERY"), ("Food",)),
+    ("debit", ("PHARM", "HOSPITAL", "CLINIC", "MEDIC", "LAB "), ("Health",)),
+    ("debit", ("NETFLIX", "SHOWMAX", "SPOTIFY", "CINEMA", "BET9JA", "SPORTYBET", "BETKING"),
+     ("Entertainment",)),
+    ("debit", ("RENT", "LANDLORD", "HOUSING"), ("Housing",)),
+]
+
+
+def guess_categories(text: str, direction: str) -> tuple:
+    upper = f" {text.upper()} "
+    for applies, keywords, cats in CATEGORY_RULES:
+        if applies != "any" and applies != direction:
+            continue
+        if any(k in upper for k in keywords):
+            return cats
+    return ()
+
+
+def _is_strict_bank_format(text: str) -> bool:
+    return bool(UBA_TXN_TYPE_RE.search(text) or FCMB_TXN_TYPE_RE.search(text))
+
+
+def parse(package: str, title: str, text: str, posted_at: int) -> Optional[Transaction]:
+    """Returns a Transaction if this looks like a money-movement alert, else None."""
+    combined = f"{title} {text}".strip()
+    if not combined:
+        return None
+
+    direction = _parse_direction(combined)
+    amount = _parse_amount(combined)
+
+    # If we can't find an amount AND can't tell the direction, this almost
+    # certainly isn't a transaction alert (promo, OTP, login alert, etc.) —
+    # skip it rather than record garbage.
+    if amount is None and direction == "unknown":
+        return None
+
+    override = BANK_PATTERNS.get(package, {})
+    if "amount" in override:
+        m = override["amount"].search(combined)
+        if m:
+            amount = _to_float(m.group(1))
+
+    narration = _parse_narration(combined, direction)
+    return Transaction(
+        package=package,
+        direction=direction,
+        amount=amount,
+        currency="NGN",
+        counterparty=narration,
+        balance_after=_parse_balance(combined),
+        raw_text=combined,
+        posted_at=posted_at,
+        strict=_is_strict_bank_format(combined),
+        category_hints=guess_categories(narration or combined, direction),
+    )
