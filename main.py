@@ -8,6 +8,8 @@ import random
 import calendar
 import os
 import re
+import hashlib
+import time
 from fpdf import FPDF
 try:
     from bank_notification_parser import parse as parse_bank_notification
@@ -73,6 +75,62 @@ def read_branded_file(raw):
         pos += 12 + length
     raise ValueError("photo")
 
+
+def make_pdf():
+    """Returns (pdf, font_name). Uses the bundled DejaVu font so names/notes with ₦, ’, —, Ọ, Ẹ etc.
+    print correctly; falls back to Helvetica if the font files are missing."""
+    pdf = FPDF()
+    regular, bold = _asset_path("DejaVuSans.ttf"), _asset_path("DejaVuSans-Bold.ttf")
+    if regular and bold:
+        try:
+            pdf.add_font("NFH", "", regular)
+            pdf.add_font("NFH", "B", bold)
+            pdf.add_font("NFH", "I", regular)
+            pdf.add_font("NFH", "BI", bold)
+            return pdf, "NFH"
+        except Exception:
+            pdf = FPDF()
+    return pdf, "Helvetica"
+
+
+def pdf_text(text, font):
+    """Makes any user text safe for the PDF font (drops emoji; Helvetica only knows Latin-1)."""
+    if not text:
+        return ""
+    text = "".join(ch for ch in str(text) if ord(ch) <= 0xFFFF and not (0xFE00 <= ord(ch) <= 0xFE0F) and ch != "\u200d")
+    if font == "Helvetica":
+        text = text.replace("₦", "NGN ").replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"').replace("—", "-").replace("–", "-")
+        text = text.encode("latin-1", errors="replace").decode("latin-1")
+    return text
+
+
+def picked_to_date(picked):
+    """DatePicker gives the chosen day as local midnight converted to UTC (e.g. 23:00 the day
+    before in Lagos). Adding 12 h lands mid-day of the chosen date in every time zone."""
+    if isinstance(picked, datetime.datetime):
+        return (picked + datetime.timedelta(hours=12)).date()
+    return picked
+
+
+def to_number(text, required=False):
+    """'250,000' / '₦250000' / ' 250000 ' -> 250000.0. Empty -> 0 (or ValueError if required)."""
+    cleaned = re.sub(r"[,\s₦]", "", str(text or ""))
+    cleaned = re.sub(r"^(?i:NGN|N)", "", cleaned)
+    if not cleaned:
+        if required:
+            raise ValueError("empty")
+        return 0.0
+    value = float(cleaned)
+    if value != value or value in (float("inf"), float("-inf")) or value < 0:
+        raise ValueError("bad number")
+    return value
+
+
+def safe_filename(name):
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", str(name or "")).strip("_") or "File"
+
+
+BACKUP_EXTRA_KEYS = ("ajo_groups", "active_ajo_group_id", "category_changes", "salary_history", "alert_category_rules")
 
 PHOTO_STRIPPED_MSG = ("This picture has no data inside. It was probably sent as a photo, which removes the data. "
                       "Ask the sender to send it again on WhatsApp as a Document (📎 → Document).")
@@ -199,7 +257,7 @@ async def build_ui(page: ft.Page):
                     "1. Purpose: This application is provided as a general tool to help staff of any organization estimate their housing upfront payments and salary breakdowns, based on figures you enter yourself.\n\n"
                     "2. Accuracy: All calculations, including PAYE tax estimates, are based on the Nigeria Tax Act 2025 as understood at the time of writing and are for guidance only. Verify against your organization's official payroll policy and current tax law.\n\n"
                     "3. Disclaimer: The developer is not responsible for any financial or tax decisions made based on these calculations. Please consult your HR department or a tax professional for official confirmation.\n\n"
-                    "4. Privacy: No personal data or salary information is transmitted or shared externally by this application. Everything you enter and save stays on your device.",
+                    "4. Privacy: Your salary figures, transactions, Ajo groups and other entries are stored only on your device and are never sent to the developer. The app shows ads from Google AdMob; to serve and measure ads, Google may collect device information such as your advertising ID and approximate location, as described in Google's privacy policy (policies.google.com/privacy). You can reset or delete your advertising ID in your phone's Settings → Google → Ads.",
                     color=DARK_TEXT,
                     size=14
                 ),
@@ -391,7 +449,7 @@ async def build_ui(page: ft.Page):
 
         def render_slide():
             s = TUTORIAL_SLIDES[slide_index["value"]]
-            slide_icon.name = s["icon"]
+            slide_icon.icon = s["icon"]
             slide_icon.color = s["icon_color"]
             slide_title.value = s["title"]
             slide_text.value = s["text"]
@@ -499,7 +557,17 @@ async def build_ui(page: ft.Page):
     # ==================================================================
     # MAIN APP (Housing Upfront tab + Salary Management tab)
     # ==================================================================
+    build_gen = {"n": 0}
+
     async def build_main_app():
+        # "Replay Tutorial" rebuilds the app. Stop the old animation loops and drop the old
+        # sound players/sensors so they don't pile up and slow the phone down.
+        build_gen["n"] += 1
+        my_gen = build_gen["n"]
+        try:
+            page.services.clear()
+        except Exception:
+            pass
         dice_tick_sound = fta_audio.Audio(src="dice_tick.wav", autoplay=False, volume=1)
         reveal_ding_sound = fta_audio.Audio(src="reveal_ding.wav", autoplay=False, volume=1)
         fanfare_sound = fta_audio.Audio(src="fanfare.wav", autoplay=False, volume=1)
@@ -573,7 +641,7 @@ async def build_ui(page: ft.Page):
 
         async def animate_wave_loop():
             try:
-                while True:
+                while build_gen["n"] == my_gen:
                     if not app_active["value"]:
                         await asyncio.sleep(1.0)
                         continue
@@ -609,7 +677,7 @@ async def build_ui(page: ft.Page):
 
         async def twinkle_galaxy(stars):
             try:
-                while galaxy_stars_active["value"]:
+                while galaxy_stars_active["value"] and build_gen["n"] == my_gen:
                     if not app_active["value"]:
                         await asyncio.sleep(1.0)
                         continue
@@ -628,13 +696,13 @@ async def build_ui(page: ft.Page):
                 background_layer.bgcolor = None
                 galaxy_stars_active["value"] = True
                 asyncio.create_task(twinkle_galaxy(galaxy_stars))
-                mode_badge_icon.name = ft.Icons.DARK_MODE_ROUNDED
+                mode_badge_icon.icon = ft.Icons.DARK_MODE_ROUNDED
                 mode_badge_text.value = "Dark Mode"
             else:
                 galaxy_stars_active["value"] = False
                 background_layer.content = ft.Image(src="background.png", fit=ft.BoxFit.COVER)
                 background_layer.bgcolor = None
-                mode_badge_icon.name = ft.Icons.LIGHT_MODE_ROUNDED
+                mode_badge_icon.icon = ft.Icons.LIGHT_MODE_ROUNDED
                 mode_badge_text.value = "Light Mode"
             await page.shared_preferences.set("theme_override", "dark" if dark_mode_state["value"] else "light")
             page.update()
@@ -701,7 +769,7 @@ async def build_ui(page: ft.Page):
 
         async def animate_logo_pulse_loop():
             try:
-                while True:
+                while build_gen["n"] == my_gen:
                     if not app_active["value"]:
                         await asyncio.sleep(1.0)
                         continue
@@ -719,7 +787,7 @@ async def build_ui(page: ft.Page):
             square_angle = 0.0
             full_turn = 6.28318530718
             try:
-                while True:
+                while build_gen["n"] == my_gen:
                     if not app_active["value"]:
                         await asyncio.sleep(1.0)
                         continue
@@ -827,9 +895,9 @@ async def build_ui(page: ft.Page):
 
         async def on_calculate_click(e):
             try:
-                salary = float(salary_input.value)
-                increment_pct = float(increment_input.value)
-                rate_pct = float(rate_input.value)
+                salary = to_number(salary_input.value, required=True)
+                increment_pct = to_number(increment_input.value)
+                rate_pct = to_number(rate_input.value, required=True)
                 increment_name = increment_label_input.value.strip() or "Increment"
 
                 increment_amount = salary * (increment_pct / 100.0)
@@ -933,11 +1001,11 @@ async def build_ui(page: ft.Page):
 
         async def sm_on_calculate_click(e):
             try:
-                basic = float(sm_basic_input.value or 0)
-                housing = float(sm_housing_input.value or 0)
-                transport = float(sm_transport_input.value or 0)
-                other = float(sm_other_input.value or 0)
-                annual_rent = float(sm_rent_input.value or 0)
+                basic = to_number(sm_basic_input.value)
+                housing = to_number(sm_housing_input.value)
+                transport = to_number(sm_transport_input.value)
+                other = to_number(sm_other_input.value)
+                annual_rent = to_number(sm_rent_input.value)
 
                 gross_monthly = basic + housing + transport + other
                 gross_annual = gross_monthly * 12.0
@@ -973,6 +1041,9 @@ async def build_ui(page: ft.Page):
                 sm_results.scale = 1
                 page.update()
             except ValueError:
+                last_sm_result.clear()  # never Save/Share an old result after a bad entry
+                for _r in (sm_result_gross, sm_result_pension, sm_result_nhf, sm_result_paye, sm_result_net):
+                    _r.spans[1].text = "—"
                 sm_result_gross.spans[1].text = "Invalid Input"
                 page.update()
 
@@ -994,7 +1065,7 @@ async def build_ui(page: ft.Page):
             sm_status_text.value = "Saved to history."
             page.update()
 
-        def sm_on_share_click(e):
+        async def sm_on_share_click(e):
             if not last_sm_result:
                 sm_status_text.value = "Please calculate first before sharing."
                 page.update()
@@ -1013,7 +1084,7 @@ async def build_ui(page: ft.Page):
                 f"Net Pay (Monthly): ₦{r['net_monthly']:,.2f}"
             )
             try:
-                page.set_clipboard(summary)
+                await page.clipboard.set(summary)
                 sm_status_text.value = "Copied to clipboard! Paste it in WhatsApp, Email, etc."
             except Exception:
                 sm_status_text.value = "Could not copy automatically."
@@ -1460,8 +1531,9 @@ async def build_ui(page: ft.Page):
                 seen[pkg] = info
 
                 # Messaging apps re-post the same notification when a conversation updates.
-                key = f"{pkg}|{title}|{text}"
-                if key in processed_set:
+                legacy_key = f"{pkg}|{title}|{text}"
+                key = hashlib.md5(legacy_key.encode("utf-8", "ignore")).hexdigest()[:16]  # small, fast to save
+                if key in processed_set or legacy_key in processed_set:
                     dupes += 1
                     continue
                 processed_set.add(key)
@@ -1513,7 +1585,12 @@ async def build_ui(page: ft.Page):
 
                 recent.insert(0, rec)
 
-            latest = max((json.loads(l).get("posted_at", 0) for l in lines if l.startswith("{")), default=0)
+            latest = 0
+            for l in lines:
+                try:
+                    latest = max(latest, int(json.loads(l).get("posted_at", 0) or 0))
+                except Exception:
+                    pass  # a half-written line must never lose the rest of the batch
             if latest:
                 seen["_last_capture_ms"] = max(latest, seen.get("_last_capture_ms", 0))
             _write_json(NOTIF_SEEN_PACKAGES_FILE, seen)
@@ -1776,7 +1853,7 @@ async def build_ui(page: ft.Page):
 
             async def save_budget(e):
                 try:
-                    amount = float(budget_amount_input.value)
+                    amount = to_number(budget_amount_input.value, required=True)
                 except (ValueError, TypeError):
                     budget_error_text.value = "Enter a valid amount."
                     page.update()
@@ -1818,30 +1895,34 @@ async def build_ui(page: ft.Page):
             )
             page.show_dialog(dlg)
 
+        def find_txn_index(full, idx, entry):
+            """Where `entry` is now in the saved list — or -1 if it's gone. Never trusts the old
+            position alone, so a double tap or an alert arriving meanwhile can't hit the wrong row."""
+            if 0 <= idx < len(full) and full[idx] == entry:
+                return idx
+            for i, t in enumerate(full):
+                if t == entry:
+                    return i
+            return -1
+
+        txn_busy = {"value": False}
+
         def show_undo_snackbar(deleted_entry):
             undo_state = {"handled": False}
+            deleted_from_key = profile_key("money_transactions")  # Undo puts it back in the SAME profile
 
             async def handle_undo(e):
                 if undo_state["handled"]:
                     return
                 undo_state["handled"] = True
-                full = await load_transactions()
-                full.insert(0, deleted_entry)
-                await save_transactions(full)
-                await refresh_money_ui()
                 try:
-                    page.pop_dialog()
+                    raw = await page.shared_preferences.get(deleted_from_key)
+                    full = json.loads(raw) if raw else []
                 except Exception:
-                    pass
-
-            async def auto_dismiss():
-                await asyncio.sleep(5)
-                if not undo_state["handled"]:
-                    undo_state["handled"] = True
-                    try:
-                        page.pop_dialog()
-                    except Exception:
-                        pass
+                    full = []
+                full.insert(0, deleted_entry)
+                await page.shared_preferences.set(deleted_from_key, json.dumps(full))
+                await refresh_money_ui()
 
             try:
                 snack = ft.SnackBar(
@@ -1854,19 +1935,18 @@ async def build_ui(page: ft.Page):
                     margin=ft.Margin.only(bottom=300, left=10, right=10),
                 )
                 page.show_dialog(snack)
-                asyncio.create_task(auto_dismiss())
             except Exception:
                 mt_status_text.value = "Transaction deleted."
                 page.update()
 
         # -------------------- PDF LOG BOOK EXPORT --------------------
         def build_transactions_pdf_bytes(title, txn_list):
-            pdf = FPDF()
+            pdf, PF = make_pdf()
             pdf.add_page()
-            pdf.set_font("Helvetica", "B", 16)
+            pdf.set_font(PF, "B", 16)
             pdf.cell(0, 10, "Naira Finance Hub", ln=True, align="C")
-            pdf.set_font("Helvetica", "", 12)
-            pdf.cell(0, 8, title, ln=True, align="C")
+            pdf.set_font(PF, "", 12)
+            pdf.cell(0, 8, pdf_text(title, PF), ln=True, align="C")
             pdf.ln(4)
 
             total_income = sum(t["amount"] for t in txn_list if t["type"] == "income")
@@ -1874,14 +1954,14 @@ async def build_ui(page: ft.Page):
             total_charges = sum(t.get("charge", 0.0) or 0.0 for t in txn_list)
             net = total_income - total_expense - total_charges
 
-            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_font(PF, "B", 11)
             pdf.cell(0, 7, f"Total Income: NGN {total_income:,.2f}", ln=True)
             pdf.cell(0, 7, f"Total Expense: NGN {total_expense:,.2f}", ln=True)
             pdf.cell(0, 7, f"Total Bank Charges: NGN {total_charges:,.2f}", ln=True)
             pdf.cell(0, 7, f"Net: NGN {net:,.2f}", ln=True)
             pdf.ln(6)
 
-            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_font(PF, "B", 10)
             pdf.set_fill_color(230, 230, 230)
             pdf.cell(25, 8, "Date", border=1, fill=True)
             pdf.cell(20, 8, "Type", border=1, fill=True)
@@ -1889,14 +1969,14 @@ async def build_ui(page: ft.Page):
             pdf.cell(65, 8, "Note", border=1, fill=True)
             pdf.cell(35, 8, "Amount", border=1, fill=True, ln=True)
 
-            pdf.set_font("Helvetica", "", 9)
+            pdf.set_font(PF, "", 9)
             sorted_txns = sorted(txn_list, key=lambda t: t.get("date", ""))
             for t in sorted_txns:
                 sign = "+" if t["type"] == "income" else "-"
-                note = (t.get("note", "") or "-")[:35]
-                pdf.cell(25, 7, t.get("date", ""), border=1)
+                note = pdf_text((t.get("note", "") or "-"), PF)[:35]
+                pdf.cell(25, 7, pdf_text(t.get("date", ""), PF), border=1)
                 pdf.cell(20, 7, t["type"].capitalize(), border=1)
-                pdf.cell(35, 7, t.get("category", "Other")[:20], border=1)
+                pdf.cell(35, 7, pdf_text(t.get("category", "Other"), PF)[:20], border=1)
                 pdf.cell(65, 7, note, border=1)
                 pdf.cell(35, 7, f"{sign}NGN {t['amount']:,.2f}", border=1, ln=True)
 
@@ -1920,10 +2000,15 @@ async def build_ui(page: ft.Page):
 
             month_name = datetime.date(view_year, view_month, 1).strftime("%B %Y")
             active_name = profile_names_state.get(str(active_profile_state["value"]), f"Profile {active_profile_state['value']}")
-            pdf_bytes = build_transactions_pdf_bytes(f"Monthly Log - {active_name} - {month_name}", month_txns)
+            try:
+                pdf_bytes = build_transactions_pdf_bytes(f"Monthly Log - {active_name} - {month_name}", month_txns)
+            except Exception as ex:
+                mt_status_text.value = f"Couldn't create the PDF ({type(ex).__name__}). Please try again."
+                page.update()
+                return
             file_path = await pdf_file_picker.save_file(
                 dialog_title="Save Monthly Log",
-                file_name=f"NairaFinanceHub_{active_name.replace(' ', '_')}_{month_name.replace(' ', '_')}.pdf",
+                file_name=f"NairaFinanceHub_{safe_filename(active_name)}_{safe_filename(month_name)}.pdf",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["pdf"],
                 src_bytes=pdf_bytes,
@@ -1944,10 +2029,15 @@ async def build_ui(page: ft.Page):
                     year_txns.append(t)
 
             active_name = profile_names_state.get(str(active_profile_state["value"]), f"Profile {active_profile_state['value']}")
-            pdf_bytes = build_transactions_pdf_bytes(f"Annual Log - {active_name} - {view_year}", year_txns)
+            try:
+                pdf_bytes = build_transactions_pdf_bytes(f"Annual Log - {active_name} - {view_year}", year_txns)
+            except Exception as ex:
+                mt_status_text.value = f"Couldn't create the PDF ({type(ex).__name__}). Please try again."
+                page.update()
+                return
             file_path = await pdf_file_picker.save_file(
                 dialog_title="Save Annual Log",
-                file_name=f"NairaFinanceHub_{active_name.replace(' ', '_')}_{view_year}_Annual.pdf",
+                file_name=f"NairaFinanceHub_{safe_filename(active_name)}_{view_year}_Annual.pdf",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["pdf"],
                 src_bytes=pdf_bytes,
@@ -1974,11 +2064,28 @@ async def build_ui(page: ft.Page):
                     budgets = json.loads(raw_budget) if raw_budget else {}
                 except Exception:
                     budgets = {}
-                profiles_data[str(i)] = {"transactions": txns, "budgets": budgets}
+                try:
+                    raw_qa = await page.shared_preferences.get(f"quick_add_shortcuts_{i}")
+                    quick = json.loads(raw_qa) if raw_qa else []
+                except Exception:
+                    quick = []
+                profiles_data[str(i)] = {"transactions": txns, "budgets": budgets, "quick_add": quick}
+
+            # Everything else you'd hate to lose on a new phone: Ajo groups, your custom
+            # categories, alert rules and saved salary calculations.
+            extras = {}
+            for key in BACKUP_EXTRA_KEYS:
+                try:
+                    val = await page.shared_preferences.get(key)
+                    if val:
+                        extras[key] = val
+                except Exception:
+                    pass
 
             backup_obj = {
                 "app": "Naira Finance Hub",
-                "backup_version": 2,
+                "backup_version": 3,
+                "extras": extras,
                 "created": datetime.datetime.now().isoformat(),
                 "user_name": saved_username or "",
                 "profile_names": profile_names_state,
@@ -2026,34 +2133,124 @@ async def build_ui(page: ft.Page):
                         return
                     raise
 
-                if "profiles" in backup_obj:
-                    # New-format backup: restore all 3 profiles, each into its own correct slot
-                    for i in range(1, PROFILE_COUNT + 1):
-                        profile_data = backup_obj["profiles"].get(str(i), {"transactions": [], "budgets": {}})
-                        await page.shared_preferences.set(f"money_transactions_{i}", json.dumps(profile_data.get("transactions", [])))
-                        await page.shared_preferences.set(f"category_budgets_{i}", json.dumps(profile_data.get("budgets", {})))
-                    restored_names = backup_obj.get("profile_names", {})
-                    if restored_names:
-                        profile_names_state.clear()
-                        profile_names_state.update(restored_names)
-                        await save_profile_names(profile_names_state)
-                        profile_label_text.value = profile_names_state.get(str(active_profile_state["value"]), f"Profile {active_profile_state['value']}")
-                    restore_msg = "Backup restored! All 3 profiles are back."
-                else:
-                    # Older backup format: only had one profile's data, restore into the currently active profile
-                    restored_transactions = backup_obj.get("money_transactions", [])
-                    await save_transactions(restored_transactions)
-                    restore_msg = "Backup restored into the current profile (older backup format)."
+                if not isinstance(backup_obj, dict) or not ("profiles" in backup_obj or "money_transactions" in backup_obj):
+                    msg = ("That's an Ajo group file, not a backup. Import it from the Ajo tab instead."
+                           if isinstance(backup_obj, dict) and "members" in backup_obj
+                           else "That doesn't look like a valid backup file.")
+                    page.show_dialog(ft.SnackBar(ft.Text(msg, color="white"), bgcolor="#C62828", duration=ft.Duration(seconds=5), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
+                    page.update()
+                    return
 
-                if backup_obj.get("user_name"):
-                    await page.shared_preferences.set("user_name", backup_obj["user_name"])
+                created = str(backup_obj.get("created", ""))[:10]
 
-                page.show_dialog(ft.SnackBar(ft.Text(restore_msg, color="white"), bgcolor="#2E8B57", duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
-                await refresh_money_ui()
+                async def do_restore(ev):
+                    page.pop_dialog()
+                    try:
+                        await apply_backup(backup_obj)
+                    except Exception:
+                        page.show_dialog(ft.SnackBar(ft.Text("Restore failed — your current data was not changed by the failed step. Please try again.", color="white"), bgcolor="#C62828", duration=ft.Duration(seconds=4), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
+                        page.update()
+
+                page.show_dialog(ft.AlertDialog(
+                    scrollable=True, modal=True, bgcolor="#FFFFFF",
+                    title=ft.Text("Restore this backup?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                    content=ft.Text(
+                        (f"Backup made on {created}.\n\n" if created else "") +
+                        "Your Money Tracker transactions, budgets and Quick Add shortcuts on this phone will be "
+                        "REPLACED by the ones in the backup. Ajo groups, categories and alert rules from the backup "
+                        "are added to what you already have.",
+                        color=DARK_TEXT, size=13),
+                    actions=[
+                        ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                        ft.ElevatedButton("Restore", on_click=do_restore, style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
+                    ],
+                    actions_alignment=ft.MainAxisAlignment.END,
+                ))
                 page.update()
             except Exception:
                 page.show_dialog(ft.SnackBar(ft.Text("That doesn't look like a valid backup file.", color="white"), bgcolor="#C62828", duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
                 page.update()
+
+        async def apply_backup(backup_obj):
+            if "profiles" in backup_obj:
+                # New-format backup: restore all 3 profiles, each into its own correct slot
+                for i in range(1, PROFILE_COUNT + 1):
+                    profile_data = backup_obj["profiles"].get(str(i), {"transactions": [], "budgets": {}})
+                    await page.shared_preferences.set(f"money_transactions_{i}", json.dumps(profile_data.get("transactions", [])))
+                    await page.shared_preferences.set(f"category_budgets_{i}", json.dumps(profile_data.get("budgets", {})))
+                    if "quick_add" in profile_data:
+                        await page.shared_preferences.set(f"quick_add_shortcuts_{i}", json.dumps(profile_data.get("quick_add", [])))
+                restored_names = backup_obj.get("profile_names", {})
+                if restored_names:
+                    profile_names_state.clear()
+                    profile_names_state.update(restored_names)
+                    await save_profile_names(profile_names_state)
+                    profile_label_text.value = profile_names_state.get(str(active_profile_state["value"]), f"Profile {active_profile_state['value']}")
+                restore_msg = "Backup restored! All 3 profiles are back."
+            else:
+                # Older backup format: only had one profile's data, restore into the currently active profile
+                await save_transactions(backup_obj.get("money_transactions", []))
+                restore_msg = "Backup restored into the current profile (older backup format)."
+
+            await merge_backup_extras(backup_obj.get("extras", {}) or {})
+
+            if backup_obj.get("user_name"):
+                await page.shared_preferences.set("user_name", backup_obj["user_name"])
+
+            page.show_dialog(ft.SnackBar(ft.Text(restore_msg, color="white"), bgcolor="#2E8B57", duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
+            await refresh_money_ui()
+            try:
+                await refresh_quick_add_row()
+                await refresh_ajo_ui()
+            except Exception:
+                pass
+            page.update()
+
+        async def merge_backup_extras(extras):
+            """Adds the backup's extras to what's on the phone without throwing anything away."""
+            async def get_json(key, default):
+                try:
+                    raw = await page.shared_preferences.get(key)
+                    return json.loads(raw) if raw else default
+                except Exception:
+                    return default
+            def parse(key, default):
+                try:
+                    return json.loads(extras[key]) if key in extras else default
+                except Exception:
+                    return default
+
+            # Ajo groups: add the ones this phone doesn't have yet (same group = keep the phone's copy).
+            b_groups = [g for g in parse("ajo_groups", []) if is_valid_ajo_group(g)]
+            if b_groups:
+                cur = await load_ajo_groups()
+                have = {g["id"] for g in cur}
+                cur.extend(g for g in b_groups if g["id"] not in have)
+                await save_ajo_groups(cur)
+                if not await page.shared_preferences.get("active_ajo_group_id") and cur:
+                    await save_active_ajo_id(cur[0]["id"])
+
+            # Custom categories
+            b_cats = parse("category_changes", None)
+            if isinstance(b_cats, dict):
+                cur = await load_category_changes()
+                added = dict(b_cats.get("added", {}))
+                added.update(cur.get("added", {}))
+                removed = sorted((set(b_cats.get("removed", [])) | set(cur.get("removed", []))) - set(added))
+                await save_category_changes({"added": added, "removed": removed})
+                await apply_saved_category_changes()
+
+            # Alert category rules
+            b_rules = parse(ALERT_RULES_KEY, [])
+            if b_rules:
+                cur = await load_alert_rules()
+                have = {r.get("keyword") for r in cur}
+                cur.extend(r for r in b_rules if isinstance(r, dict) and r.get("keyword") not in have)
+                await save_alert_rules(cur)
+
+            # Saved salary calculations: only fill in if this phone has none.
+            if "salary_history" in extras and not await get_json("salary_history", []):
+                await page.shared_preferences.set("salary_history", extras["salary_history"])
 
         def show_backup_help(e):
             dlg = ft.AlertDialog(scrollable=True, 
@@ -2069,7 +2266,7 @@ async def build_ui(page: ft.Page):
                             ),
                             ft.Text("📤 Backup", weight=ft.FontWeight.BOLD, color="#C62828", size=13),
                             ft.Text(
-                                "Tap 'Backup Data' to save ALL 3 profiles — transactions, budgets, and their custom names — into one file. Choose where to save it — Downloads, Google Drive, or email it to yourself.",
+                                "Tap 'Backup Data' to save everything into one file: all 3 profiles (transactions, budgets, Quick Add shortcuts and profile names), your Ajo groups, custom categories, alert rules and saved salary calculations. Choose where to save it — Downloads, Google Drive, or email it to yourself.",
                                 color=DARK_TEXT, size=12
                             ),
                             ft.Text("📥 Restore", weight=ft.FontWeight.BOLD, color="#C62828", size=13),
@@ -2145,7 +2342,7 @@ async def build_ui(page: ft.Page):
                     def handler(e):
                         state["value"] = cat
                         label_text.value = cat
-                        label_icon.name = category_icon(cat)
+                        label_icon.icon = category_icon(cat)
                         page.pop_dialog()
                         page.update()
                     return handler
@@ -2193,8 +2390,8 @@ async def build_ui(page: ft.Page):
             active_profile_state["value"] = profile_num
             await save_active_profile(profile_num)
             profile_label_text.value = profile_names_state.get(str(profile_num), f"Profile {profile_num}")
-            current_view_date["year"] = today.year
-            current_view_date["month"] = today.month
+            current_view_date["year"] = datetime.date.today().year
+            current_view_date["month"] = datetime.date.today().month
             page.pop_dialog()
             await refresh_money_ui()
             page.update()
@@ -2303,8 +2500,7 @@ async def build_ui(page: ft.Page):
         def mt_on_date_picked(e):
             picked = e.control.value
             if picked:
-                picked_date = picked.date() if hasattr(picked, "date") else picked
-                picked_date = picked_date + datetime.timedelta(days=1)
+                picked_date = picked_to_date(picked)
                 if picked_date > datetime.date.today():
                     mt_status_text.value = "You can't select a future date. Please pick today or an earlier date."
                     page.update()
@@ -2323,7 +2519,7 @@ async def build_ui(page: ft.Page):
 
         mt_date_button = ft.ElevatedButton(
             content=ft.Container(content=mt_date_button_text, width=190),
-            on_click=lambda e: page.show_dialog(mt_date_picker),
+            on_click=lambda e: (setattr(mt_date_picker, "last_date", datetime.datetime.now()), page.show_dialog(mt_date_picker)),
             style=ft.ButtonStyle(bgcolor="#FFD700"),
         )
 
@@ -2404,8 +2600,7 @@ async def build_ui(page: ft.Page):
             def edit_on_date_picked(e):
                 picked = e.control.value
                 if picked:
-                    picked_date = picked.date() if hasattr(picked, "date") else picked
-                    picked_date = picked_date + datetime.timedelta(days=1)
+                    picked_date = picked_to_date(picked)
                     if picked_date > datetime.date.today():
                         edit_error_text.value = "You can't select a future date. Please pick today or an earlier date."
                         page.update()
@@ -2423,13 +2618,13 @@ async def build_ui(page: ft.Page):
             )
             edit_date_button = ft.ElevatedButton(
                 content=ft.Container(content=edit_date_button_text, width=200),
-                on_click=lambda e: page.show_dialog(edit_date_picker),
+                on_click=lambda e: (setattr(edit_date_picker, "last_date", datetime.datetime.now()), page.show_dialog(edit_date_picker)),
                 style=ft.ButtonStyle(bgcolor="#FFD700"),
             )
 
             async def save_edit(e):
                 try:
-                    new_amount = float(edit_amount_input.value)
+                    new_amount = to_number(edit_amount_input.value, required=True)
                 except (ValueError, TypeError):
                     edit_error_text.value = "Enter a valid amount."
                     page.update()
@@ -2437,20 +2632,21 @@ async def build_ui(page: ft.Page):
 
                 charge_raw = (edit_charge_input.value or "").strip()
                 try:
-                    new_charge = float(charge_raw) if charge_raw else 0.0
+                    new_charge = to_number(charge_raw)
                 except ValueError:
                     edit_error_text.value = "Transaction charge must be a number."
                     page.update()
                     return
 
                 full = await load_transactions()
-                if 0 <= actual_idx < len(full):
-                    full[actual_idx]["type"] = edit_type_state["value"]
-                    full[actual_idx]["category"] = edit_category_state["value"]
-                    full[actual_idx]["amount"] = new_amount
-                    full[actual_idx]["charge"] = new_charge
-                    full[actual_idx]["note"] = (edit_note_input.value or "").strip()
-                    full[actual_idx]["date"] = edit_selected_date["value"].isoformat()
+                pos = find_txn_index(full, actual_idx, entry)
+                if pos >= 0:
+                    full[pos]["type"] = edit_type_state["value"]
+                    full[pos]["category"] = edit_category_state["value"]
+                    full[pos]["amount"] = new_amount
+                    full[pos]["charge"] = new_charge
+                    full[pos]["note"] = (edit_note_input.value or "").strip()
+                    full[pos]["date"] = edit_selected_date["value"].isoformat()
                     await save_transactions(full)
                 moved = 0
                 if is_auto_alert and edit_remember_cb.value and (edit_remember_tf.value or "").strip():
@@ -2467,10 +2663,10 @@ async def build_ui(page: ft.Page):
             async def delete_from_edit(e):
                 full = await load_transactions()
                 deleted_entry = None
-                if 0 <= actual_idx < len(full):
-                    deleted_entry = full[actual_idx]
-                    del full[actual_idx]
-                await save_transactions(full)
+                pos = find_txn_index(full, actual_idx, entry)
+                if pos >= 0:
+                    deleted_entry = full.pop(pos)
+                    await save_transactions(full)
                 page.pop_dialog()
                 await refresh_money_ui()
                 if deleted_entry:
@@ -2504,8 +2700,14 @@ async def build_ui(page: ft.Page):
             )
             page.show_dialog(edit_dialog)
 
+        last_auto_ingest = {"t": 0.0}
+
         async def refresh_money_ui():
-            await ingest_pending_notifications()
+            # Reading captured alerts used to run on EVERY screen refresh (each add, edit, delete,
+            # month change). Now it runs at most once every 20 s; "Check now" still runs it at once.
+            if time.monotonic() - last_auto_ingest["t"] > 20:
+                last_auto_ingest["t"] = time.monotonic()
+                await ingest_pending_notifications()
             mt_month_label.value = datetime.date(current_view_date["year"], current_view_date["month"], 1).strftime("%B %Y")
 
             bounce_icon_containers = []
@@ -2592,7 +2794,7 @@ async def build_ui(page: ft.Page):
                     ft.Row(
                         [
                             ft.Row([bouncy_icon(cat), ft.Text(f"{cat} ({'Income' if kind == 'income' else 'Expense'})", color="white", size=13)], spacing=6),
-                            ft.Text(f"{'+' if kind == 'income' else '-'}₦{amt:,.2f}", color="#2E8B57" if kind == "income" else "#C62828", size=13, weight=ft.FontWeight.BOLD),
+                            ft.Text(f"{'+' if kind == 'income' else '-'}₦{amt:,.2f}", color="#5DE88C" if kind == "income" else "#FF6B6B", size=13, weight=ft.FontWeight.BOLD),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     )
@@ -2658,7 +2860,7 @@ async def build_ui(page: ft.Page):
                     ft.Row(
                         [
                             ft.Row([bouncy_icon(cat), ft.Text(f"{cat} ({'Income' if kind == 'income' else 'Expense'})", color="white", size=13)], spacing=6),
-                            ft.Text(f"{'+' if kind == 'income' else '-'}₦{amt:,.2f}", color="#2E8B57" if kind == "income" else "#C62828", size=13, weight=ft.FontWeight.BOLD),
+                            ft.Text(f"{'+' if kind == 'income' else '-'}₦{amt:,.2f}", color="#5DE88C" if kind == "income" else "#FF6B6B", size=13, weight=ft.FontWeight.BOLD),
                         ],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     )
@@ -2706,15 +2908,21 @@ async def build_ui(page: ft.Page):
             else:
                 mt_category_list_view.controls = [ft.Text("No transactions this month yet.", color="white", size=12)]
 
-            def make_delete(actual_idx):
+            def make_delete(actual_idx, entry):
                 async def _delete(e):
-                    full = await load_transactions()
-                    deleted_entry = None
-                    if 0 <= actual_idx < len(full):
-                        deleted_entry = full[actual_idx]
-                        del full[actual_idx]
-                    await save_transactions(full)
-                    await refresh_money_ui()
+                    if txn_busy["value"]:
+                        return  # ignore a second tap while the first delete is still saving
+                    txn_busy["value"] = True
+                    try:
+                        full = await load_transactions()
+                        deleted_entry = None
+                        pos = find_txn_index(full, actual_idx, entry)
+                        if pos >= 0:
+                            deleted_entry = full.pop(pos)
+                            await save_transactions(full)
+                        await refresh_money_ui()
+                    finally:
+                        txn_busy["value"] = False
                     page.update()
                     if deleted_entry:
                         show_undo_snackbar(deleted_entry)
@@ -2734,8 +2942,8 @@ async def build_ui(page: ft.Page):
                     full.insert(0, new_entry)
                     full = full[:10000]
                     await save_transactions(full)
-                    current_view_date["year"] = today.year
-                    current_view_date["month"] = today.month
+                    current_view_date["year"] = datetime.date.today().year
+                    current_view_date["month"] = datetime.date.today().month
                     await refresh_money_ui()
                     page.show_dialog(ft.SnackBar(ft.Text("Repeated — tap it to edit if anything changed.", color="white"), bgcolor="#2E8B57", duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
                     page.update()
@@ -2757,8 +2965,14 @@ async def build_ui(page: ft.Page):
 
             rows = []
             for actual_idx, t in display_filtered[:30]:
-                color = "#2E8B57" if t["type"] == "income" else "#C62828"
+                color = "#5DE88C" if t["type"] == "income" else "#FF6B6B"  # brighter so it reads on the dark card
                 sign = "+" if t["type"] == "income" else "-"
+                note = (t.get("note", "") or "").strip()
+                is_auto = note.startswith("Auto:")
+                if is_auto:
+                    note = note[5:].strip()
+                title = note or t["type"].capitalize()
+                sub = f"{t.get('category', 'Other')} • {t.get('date', '')}" + ("  • ⚡Auto" if is_auto else "")
                 rows.append(
                     ft.Container(
                         content=ft.Row(
@@ -2766,16 +2980,27 @@ async def build_ui(page: ft.Page):
                                 bouncy_icon(t.get("category", "Other"), size=20),
                                 ft.Column(
                                     [
-                                        ft.Text(t.get("note", "") or t["type"].capitalize(), weight=ft.FontWeight.BOLD, color="white", size=13, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                                        ft.Text(f"{t.get('category', 'Other')} • {t.get('date', '')}", size=10, color="#666666", max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                        ft.Text(title, weight=ft.FontWeight.BOLD, color="white", size=13, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                        ft.Text(sub, size=11, color="#FFD54F", weight=ft.FontWeight.BOLD, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                                     ],
-                                    spacing=0, expand=True,
+                                    spacing=1, expand=True,
                                 ),
-                                ft.Text(f"{sign}₦{t['amount']:,.2f}", color=color, weight=ft.FontWeight.BOLD),
-                                ft.IconButton(icon=ft.Icons.REPLAY_ROUNDED, icon_color="#1E88E5", icon_size=16, tooltip="Repeat with today's date", on_click=make_repeat(t)),
-                                ft.IconButton(icon=ft.Icons.CLOSE, icon_color="#C62828", icon_size=16, on_click=make_delete(actual_idx)),
+                                ft.Column(
+                                    [
+                                        ft.Text(f"{sign}₦{t['amount']:,.2f}", color=color, weight=ft.FontWeight.BOLD, size=13),
+                                        ft.Row(
+                                            [
+                                                ft.Container(content=ft.Icon(ft.Icons.REPLAY_ROUNDED, color="#64B5F6", size=18), padding=4, border_radius=12, ink=True, on_click=make_repeat(t)),
+                                                ft.Container(content=ft.Icon(ft.Icons.CLOSE, color="#EF5350", size=18), padding=4, border_radius=12, ink=True, on_click=make_delete(actual_idx, t)),
+                                            ],
+                                            spacing=6, tight=True,
+                                        ),
+                                    ],
+                                    spacing=0, horizontal_alignment=ft.CrossAxisAlignment.END, tight=True,
+                                ),
                             ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            spacing=10,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
                         on_click=make_row_click(actual_idx, t),
                         padding=ft.Padding(top=6, bottom=6, left=6, right=6),
@@ -2830,7 +3055,7 @@ async def build_ui(page: ft.Page):
 
         async def mt_on_add_click(e):
             try:
-                amount = float(mt_amount_input.value)
+                amount = to_number(mt_amount_input.value, required=True)
             except (ValueError, TypeError):
                 mt_status_text.value = "Please enter a valid amount."
                 page.update()
@@ -2838,7 +3063,7 @@ async def build_ui(page: ft.Page):
 
             charge_raw = (mt_charge_input.value or "").strip()
             try:
-                charge = float(charge_raw) if charge_raw else 0.0
+                charge = to_number(charge_raw)
             except ValueError:
                 mt_status_text.value = "Transaction charge must be a number."
                 page.update()
@@ -2863,8 +3088,8 @@ async def build_ui(page: ft.Page):
             mt_selected_date["value"] = None
             mt_date_button_text.value = "Transaction Date (Optional)"
             mt_status_text.value = "Transaction added."
-            current_view_date["year"] = today.year
-            current_view_date["month"] = today.month
+            current_view_date["year"] = datetime.date.today().year
+            current_view_date["month"] = datetime.date.today().month
             await refresh_money_ui()
             page.update()
 
@@ -2890,8 +3115,8 @@ async def build_ui(page: ft.Page):
                     full.insert(0, entry)
                     full = full[:10000]
                     await save_transactions(full)
-                    current_view_date["year"] = today.year
-                    current_view_date["month"] = today.month
+                    current_view_date["year"] = datetime.date.today().year
+                    current_view_date["month"] = datetime.date.today().month
                     await refresh_money_ui()
                     page.show_dialog(ft.SnackBar(ft.Text(f"Added: {shortcut.get('label', 'Quick add')}", color="white"), bgcolor="#2E8B57", duration=ft.Duration(seconds=2), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
                     page.update()
@@ -3070,7 +3295,7 @@ async def build_ui(page: ft.Page):
             async def add_shortcut(e):
                 label = (new_label.value or "").strip()
                 try:
-                    amount = float(new_amount.value)
+                    amount = to_number(new_amount.value, required=True)
                 except (ValueError, TypeError):
                     error_text.value = "Enter a valid amount."
                     page.update()
@@ -3323,10 +3548,16 @@ async def build_ui(page: ft.Page):
         # ==================================================================
         # AJO (ROTATING SAVINGS GROUP) TAB
         # ==================================================================
+        def is_valid_ajo_group(g):
+            return (isinstance(g, dict) and isinstance(g.get("id"), str) and g.get("id")
+                    and isinstance(g.get("name"), str) and isinstance(g.get("members", []), list))
+
         async def load_ajo_groups():
             try:
                 raw = await page.shared_preferences.get("ajo_groups")
-                return json.loads(raw) if raw else []
+                groups = json.loads(raw) if raw else []
+                # Skip anything that isn't a real group, so one bad entry can never stop the app opening.
+                return [g for g in groups if is_valid_ajo_group(g)] if isinstance(groups, list) else []
             except Exception:
                 return []
 
@@ -3380,27 +3611,30 @@ async def build_ui(page: ft.Page):
             return f"#{r:02x}{g:02x}{b:02x}"
 
         def build_ajo_pdf_bytes(group, note=""):
-            pdf = FPDF()
+            pdf, PF = make_pdf()
+
+            def _san(t):
+                return pdf_text(t, PF)
             pdf.add_page()
-            pdf.set_font("Helvetica", "B", 16)
+            pdf.set_font(PF, "B", 16)
             pdf.cell(0, 10, "Naira Finance Hub - Ajo Progress Report", ln=True, align="C")
-            pdf.set_font("Helvetica", "", 12)
-            pdf.cell(0, 8, sanitize_for_pdf(group.get("name", "Ajo Group")), ln=True, align="C")
-            pdf.set_font("Helvetica", "", 9)
+            pdf.set_font(PF, "", 12)
+            pdf.cell(0, 8, _san(group.get("name", "Ajo Group")), ln=True, align="C")
+            pdf.set_font(PF, "", 9)
             pdf.cell(0, 6, f"Generated: {datetime.date.today().isoformat()}", ln=True, align="C")
             pdf.ln(6)
 
             if note:
-                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_font(PF, "B", 12)
                 pdf.cell(0, 8, "Note from Admin", ln=True)
-                pdf.set_font("Helvetica", "I", 10)
-                pdf.multi_cell(0, 6, sanitize_for_pdf(note))
+                pdf.set_font(PF, "I", 10)
+                pdf.multi_cell(0, 6, _san(note))
                 pdf.ln(4)
 
-            rules = sanitize_for_pdf(group.get("rules", ""))
-            pdf.set_font("Helvetica", "B", 12)
+            rules = _san(group.get("rules", ""))
+            pdf.set_font(PF, "B", 12)
             pdf.cell(0, 8, "Rules & Regulations", ln=True)
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font(PF, "", 10)
             pdf.multi_cell(0, 6, rules if rules else "No rules have been set.")
             pdf.ln(4)
 
@@ -3410,11 +3644,11 @@ async def build_ui(page: ft.Page):
             month_names_pdf = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
 
             if order:
-                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_font(PF, "B", 12)
                 pdf.cell(0, 8, "Full Payout Schedule", ln=True)
-                pdf.set_font("Helvetica", "", 10)
+                pdf.set_font(PF, "", 10)
                 for i, name in enumerate(order):
-                    safe_name = sanitize_for_pdf(name)
+                    safe_name = _san(name)
                     month_str = ""
                     if i < len(round_months):
                         y_str, m_str = round_months[i].split("-")
@@ -3426,14 +3660,14 @@ async def build_ui(page: ft.Page):
                 current_round = group.get("current_round", 1)
                 if current_round <= len(order):
                     raw_collector = order[current_round - 1]
-                    collector = sanitize_for_pdf(raw_collector)
+                    collector = _san(raw_collector)
                     contribution = group.get("contribution_amount", 0)
                     payments = group.get("payments", {}).get(str(current_round), {})
                     paid_count_pdf = sum(1 for v in payments.values() if v)
                     total_pot = contribution * (1 + paid_count_pdf)
-                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.set_font(PF, "B", 12)
                     pdf.cell(0, 8, f"Current Status - Round {current_round} of {len(order)}", ln=True)
-                    pdf.set_font("Helvetica", "", 10)
+                    pdf.set_font(PF, "", 10)
                     pdf.cell(0, 6, f"Collector: {collector}", ln=True)
                     pdf.cell(0, 6, f"Amount So Far: NGN {total_pot:,.2f}", ln=True)
                     due_day_pdf = group.get("due_day", "")
@@ -3471,36 +3705,36 @@ async def build_ui(page: ft.Page):
                     contributing_members = [m for m in order if m != raw_collector]
                     paid_members = [m for m in contributing_members if payments.get(m, False)]
                     unpaid_members = [m for m in contributing_members if not payments.get(m, False)]
-                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.set_font(PF, "B", 12)
                     pdf.cell(0, 8, f"Paid This Round ({len(paid_members)})", ln=True)
-                    pdf.set_font("Helvetica", "", 10)
+                    pdf.set_font(PF, "", 10)
                     if paid_members:
                         for m in paid_members:
-                            pdf.cell(0, 6, sanitize_for_pdf(m), ln=True)
+                            pdf.cell(0, 6, _san(m), ln=True)
                     else:
                         pdf.cell(0, 6, "No one has paid yet.", ln=True)
                     pdf.ln(2)
-                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.set_font(PF, "B", 12)
                     pdf.cell(0, 8, f"Not Yet Paid ({len(unpaid_members)})", ln=True)
-                    pdf.set_font("Helvetica", "", 10)
+                    pdf.set_font(PF, "", 10)
                     if unpaid_members:
                         for m in unpaid_members:
-                            pdf.cell(0, 6, sanitize_for_pdf(m), ln=True)
+                            pdf.cell(0, 6, _san(m), ln=True)
                     else:
                         pdf.cell(0, 6, "Everyone has paid!", ln=True)
                     pdf.ln(4)
                 else:
-                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.set_font(PF, "B", 12)
                     pdf.cell(0, 8, "This Ajo cycle is complete.", ln=True)
                     pdf.ln(4)
 
             history = group.get("history", [])
             if history:
-                pdf.set_font("Helvetica", "B", 12)
+                pdf.set_font(PF, "B", 12)
                 pdf.cell(0, 8, "Already Collected (History)", ln=True)
-                pdf.set_font("Helvetica", "", 10)
+                pdf.set_font(PF, "", 10)
                 for h in history:
-                    safe_collector = sanitize_for_pdf(h.get('collector', ''))
+                    safe_collector = _san(h.get('collector', ''))
                     pdf.cell(0, 6, f"Round {h.get('round')}: {safe_collector} collected NGN {h.get('amount', 0):,.2f} on {h.get('date', '')}", ln=True)
 
             return bytes(pdf.output())
@@ -3585,10 +3819,12 @@ async def build_ui(page: ft.Page):
                     existing = active_group.setdefault("members", [])
                     # Same person holding a second "hand": label it so the draw and payment
                     # tracking can tell the two slots apart.
-                    base_lower = name.lower()
-                    taken = sum(1 for m in existing if m.lower() == base_lower or m.lower().startswith(base_lower + " ("))
-                    if taken:
-                        name = f"{name} ({taken + 1})"
+                    lower_existing = {m.lower() for m in existing}
+                    if name.lower() in lower_existing:
+                        n = 2
+                        while f"{name} ({n})".lower() in lower_existing:
+                            n += 1  # always a brand-new label, even after someone was removed
+                        name = f"{name} ({n})"
                         page.show_dialog(ft.SnackBar(ft.Text(f"Added as \"{name}\" — a second hand for the same person.", color="white"), bgcolor=PURPLE_TEXT, duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
                     existing.append(name)
                     await save_ajo_groups(groups)
@@ -3622,7 +3858,7 @@ async def build_ui(page: ft.Page):
 
                 async def save_contribution(e):
                     try:
-                        active_group["contribution_amount"] = float(contribution_field.value)
+                        active_group["contribution_amount"] = to_number(contribution_field.value)
                         await save_ajo_groups(groups)
                         update_member_count()
                         page.update()
@@ -3647,8 +3883,7 @@ async def build_ui(page: ft.Page):
                 async def on_due_date_picked(e):
                     picked = e.control.value
                     if picked:
-                        d = picked.date() if hasattr(picked, "date") else picked
-                        d = d + datetime.timedelta(days=1)
+                        d = picked_to_date(picked)
                         due_date_state["value"] = d
                         due_date_label.value = f"First Due: {d.strftime('%d %b %Y')}"
                         active_group["pending_due_date"] = d.isoformat()
@@ -3747,7 +3982,7 @@ async def build_ui(page: ft.Page):
                         page.update()
                         return
                     try:
-                        typed_contribution = float(contribution_field.value) if contribution_field.value else 0
+                        typed_contribution = to_number(contribution_field.value)
                     except (ValueError, TypeError):
                         typed_contribution = 0
                     if typed_contribution > 0:
@@ -3857,7 +4092,7 @@ async def build_ui(page: ft.Page):
                         page.update()
                         return
                     try:
-                        typed_contribution = float(contribution_field.value) if contribution_field.value else 0
+                        typed_contribution = to_number(contribution_field.value)
                     except (ValueError, TypeError):
                         typed_contribution = 0
                     if typed_contribution > 0:
@@ -4486,7 +4721,11 @@ async def build_ui(page: ft.Page):
 
                     active_group["order"] = new_full_order
                     active_group["round_months"] = new_round_months
-                    active_group["payments"][str(current_round)] = {m: False for m in pending if m != pending[0]}
+                    # Everyone except this round's collector pays — including members who already
+                    # collected in earlier rounds. Keep any "paid" ticks already made this round.
+                    old_round_pay = active_group.get("payments", {}).get(str(current_round), {})
+                    active_group.setdefault("payments", {})[str(current_round)] = {
+                        m: bool(old_round_pay.get(m, False)) for m in new_full_order if m != pending[0]}
                     await save_ajo_groups(groups)
                     page.pop_dialog()
                     await refresh_ajo_ui()
@@ -4608,6 +4847,8 @@ async def build_ui(page: ft.Page):
                 await do_advance()
 
             async def do_advance():
+                if active_group.get("current_round", 1) != current_round:
+                    return  # a second tap on "Advance" — this round was already closed
                 active_group.setdefault("history", []).append({
                     "round": current_round, "collector": collector, "amount": total_pot,
                     "date": datetime.date.today().isoformat(),
@@ -4731,6 +4972,17 @@ async def build_ui(page: ft.Page):
                         page.update()
                         return
                     raise
+                if not is_valid_ajo_group(imported_group):
+                    msg = ("That's a Money Tracker backup, not an Ajo group. Use ☰ → Restore Data for backups."
+                           if isinstance(imported_group, dict) and "profiles" in imported_group
+                           else "That doesn't look like a valid group file.")
+                    page.show_dialog(ft.SnackBar(ft.Text(msg, color="white"), bgcolor="#C62828", duration=ft.Duration(seconds=5), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
+                    page.update()
+                    return
+                for _k, _v in (("members", []), ("contribution_amount", 0), ("order", []), ("current_round", 1),
+                               ("payments", {}), ("history", []), ("rules", "")):
+                    imported_group.setdefault(_k, _v)
+                imported_group["is_admin"] = False  # an imported copy is always a member's copy
                 fresh_groups = await load_ajo_groups()
                 existing_idx = next((i for i, g in enumerate(fresh_groups) if g["id"] == imported_group.get("id")), None)
                 if existing_idx is not None and fresh_groups[existing_idx].get("is_admin", True):
@@ -4810,14 +5062,29 @@ async def build_ui(page: ft.Page):
                 return _select
 
             def make_delete_group(gid):
-                async def _delete(e):
+                async def _really_delete(e):
+                    page.pop_dialog()
                     groups2 = await load_ajo_groups()
                     groups2 = [g for g in groups2 if g["id"] != gid]
                     await save_ajo_groups(groups2)
                     if active_id == gid:
-                        await save_active_ajo_id(groups2[0]["id"] if groups2 else None)
-                    page.pop_dialog()
+                        await save_active_ajo_id(groups2[0]["id"] if groups2 else "")
                     await refresh_ajo_ui()
+
+                async def _delete(e):
+                    gname = next((g.get("name", "this group") for g in groups if g["id"] == gid), "this group")
+                    page.pop_dialog()
+                    page.show_dialog(ft.AlertDialog(
+                        modal=True, bgcolor="#FFFFFF",
+                        title=ft.Text("Delete group?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                        content=ft.Text(f"“{gname}” and all its members, payments and history will be removed from this phone. "
+                                        "This can't be undone. (Tip: Share Group first to keep a copy.)", color=DARK_TEXT, size=13),
+                        actions=[
+                            ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                            ft.ElevatedButton("Delete", on_click=_really_delete, style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
+                        ],
+                        actions_alignment=ft.MainAxisAlignment.END,
+                    ))
                 return _delete
 
             def make_rename_group(target_group):
@@ -5028,7 +5295,7 @@ async def build_ui(page: ft.Page):
                 export_bytes, ext = make_branded_file("ajo_card.png", json.dumps(shared_copy).encode("utf-8"))
                 file_path = await pdf_file_picker.save_file(
                     dialog_title="Share Ajo Group",
-                    file_name=f"NairaFinanceHub_Ajo_{current_active_group['name'].replace(' ', '_')}.{ext}",
+                    file_name=f"NairaFinanceHub_Ajo_{safe_filename(current_active_group['name'])}.{ext}",
                     file_type=ft.FilePickerFileType.CUSTOM,
                     allowed_extensions=[ext],
                     src_bytes=export_bytes,
@@ -5063,7 +5330,7 @@ async def build_ui(page: ft.Page):
                         pdf_bytes = build_ajo_pdf_bytes(current_active_group, note=(note_field.value or "").strip())
                         file_path = await pdf_file_picker.save_file(
                             dialog_title="Save Ajo Progress Report",
-                            file_name=f"Ajo_{current_active_group['name'].replace(' ', '_')}_Progress.pdf",
+                            file_name=f"Ajo_{safe_filename(current_active_group['name'])}_Progress.pdf",
                             file_type=ft.FilePickerFileType.CUSTOM,
                             allowed_extensions=["pdf"],
                             src_bytes=pdf_bytes,
@@ -5187,7 +5454,7 @@ async def build_ui(page: ft.Page):
                     return
                 current_tab_index["value"] = idx
 
-                current_tab_title.controls[0].name = tab_icons[idx]
+                current_tab_title.controls[0].icon = tab_icons[idx]
                 current_tab_title.controls[0].color = tab_icon_colors[idx]
                 current_tab_title.controls[1].value = tab_labels[idx]
 
@@ -5305,6 +5572,10 @@ async def build_ui(page: ft.Page):
 
                 tilt_x = max(-9.8, min(9.8, e.x))
                 tilt_y = max(-9.8, min(9.8, e.y))
+                # Ignore tiny sensor jitter so a phone lying still doesn't redraw the screen 8x a second.
+                if abs(tilt_x - last_tilt_update.get("x", 99)) < 0.35 and abs(tilt_y - last_tilt_update.get("y", 99)) < 0.35:
+                    return
+                last_tilt_update["x"], last_tilt_update["y"] = tilt_x, tilt_y
 
                 bg_shift_x = tilt_x * 3.6
                 bg_shift_y = tilt_y * 3.6
@@ -5328,7 +5599,7 @@ async def build_ui(page: ft.Page):
             ft.Accelerometer(
                 on_reading=handle_tilt_reading,
                 on_error=handle_tilt_error,
-                interval=ft.Duration(milliseconds=120),
+                interval=ft.Duration(milliseconds=200),
                 cancel_on_error=False,
             )
         )
