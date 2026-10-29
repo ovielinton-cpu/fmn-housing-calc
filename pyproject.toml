@@ -6,3 +6,7 @@ description = "An all-in-one financial tool for Nigerian staff: housing upfront 
 [tool.flet]
 product = "Naira Finance Hub"
 org = "com.linton"
+
+# Required by Google AdMob (flet-ads). Without it the app closes as soon as it opens.
+[tool.flet.android.meta_data]
+"com.google.android.gms.ads.APPLICATION_ID" = "ca-app-pub-1457775538229669~1648166698"
