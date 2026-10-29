@@ -35,7 +35,7 @@ from typing import Optional
 CREDIT_WORDS = ("credited", "received", "credit alert", "inflow", "deposit")
 DEBIT_WORDS = ("debited", "debit alert", "purchase", "withdrawal", "transfer to",
                "spent", "payment of", "sent")
-GENERIC_AMOUNT_RE = re.compile(r"(?:NGN|N|₦)\s?([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)", re.IGNORECASE)
+GENERIC_AMOUNT_RE = re.compile(r"(?:NGN|N|₦)\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)", re.IGNORECASE)
 
 # --- UBA-style: "Txn:DR" / "Txn:CR" as its own field ---
 UBA_TXN_TYPE_RE = re.compile(r"Txn\s*:\s*(DR|CR)\b", re.IGNORECASE)
@@ -45,8 +45,8 @@ FCMB_TXN_TYPE_RE = re.compile(r"\b(Dr|Cr)\s*Amt\s*:", re.IGNORECASE)
 
 # --- Shared across both: amount always follows "Amt:", balance always
 # follows "Bal:"/"BAL:" ---
-AMOUNT_AFTER_AMT_RE = re.compile(r"Amt\s*:\s*(?:NGN|N|₦)?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)", re.IGNORECASE)
-BALANCE_RE = re.compile(r"\bBal(?:ance)?\s*:?\s*(?:NGN|N|₦)?\s*([\d]{1,3}(?:,\d{3})*(?:\.\d{1,2})?)", re.IGNORECASE)
+AMOUNT_AFTER_AMT_RE = re.compile(r"Amt\s*:\s*(?:NGN|N|₦)?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)", re.IGNORECASE)
+BALANCE_RE = re.compile(r"\bBal(?:ance)?\s*:?\s*(?:NGN|N|₦)?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)", re.IGNORECASE)
 
 # --- Narration: "Des:"/"DESC:" up to the next known field label ---
 NARRATION_RE = re.compile(
