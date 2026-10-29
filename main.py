@@ -21,6 +21,46 @@ except Exception as _parser_ex:  # missing file, or an error inside it
 NOTIF_PACKAGE_NAME = "com.linton.naira_finance_hub"
 
 # ---------------------------------------------------------------------------
+# Speed fix for Flet 0.83: when a screen is redrawn, Flet compares every removed control
+# with every added one (n x n). With a few hundred rows that took seconds on a phone and
+# made the app look frozen. Same logic, using fast set lookups instead.
+# ---------------------------------------------------------------------------
+def _install_fast_patch():
+    try:
+        from flet.messaging.session import Session
+        from flet.messaging.protocol import ClientAction, ClientMessage, PatchControlBody
+    except Exception:
+        return
+    if getattr(Session, "_nfh_fast_patch", False) or not hasattr(Session, "_Session__get_update_control_patch"):
+        return
+
+    def patch_control(self, control, prev_control=None, parent=None, path=None, frozen=False):
+        patch, added_controls, removed_controls = self._Session__get_update_control_patch(
+            control=control, prev_control=prev_control or control,
+            parent=parent, path=path, frozen=frozen)
+        index = self._Session__index
+        added_ids = {c._i for c in added_controls}
+        removed_ids = {c._i for c in removed_controls}
+        for removed_control in removed_controls:
+            if removed_control._i not in added_ids:
+                removed_control.will_unmount()
+            index.pop(removed_control._i, None)
+        if len(patch) > 1:
+            self._Session__send_message(
+                ClientMessage(ClientAction.PATCH_CONTROL,
+                              PatchControlBody(parent._i if parent else control._i, patch)))
+        for added_control in added_controls:
+            index[added_control._i] = added_control
+            if added_control._i not in removed_ids:
+                added_control.did_mount()
+
+    Session.patch_control = patch_control
+    Session._nfh_fast_patch = True
+
+
+_install_fast_patch()
+
+# ---------------------------------------------------------------------------
 # Branded data files: backups and shared Ajo groups are saved as a PNG picture
 # (app logo + label) with the real data tucked inside a private PNG chunk, so the
 # file shows the app's logo in Files / WhatsApp / Gallery. Old .json files still load.
@@ -641,11 +681,12 @@ async def build_ui(page: ft.Page):
 
         async def animate_wave_loop():
             try:
-                while build_gen["n"] == my_gen:
-                    if not app_active["value"]:
-                        await asyncio.sleep(1.0)
-                        continue
-                    for angle, pause in ((0.35, 0.3), (-0.35, 0.3), (0.35, 0.3), (0, 1.5)):
+                # Wave a few times when the app opens, then stop. A never-ending animation makes
+                # Flutter redraw the whole page every frame, which made the app hang.
+                for _ in range(3):
+                    if build_gen["n"] != my_gen:
+                        return
+                    for angle, pause in ((0.35, 0.3), (-0.35, 0.3), (0.35, 0.3), (0, 0.6)):
                         wave_hand.rotate = angle
                         _refresh(wave_hand)
                         await asyncio.sleep(pause)
@@ -677,14 +718,13 @@ async def build_ui(page: ft.Page):
 
         async def twinkle_galaxy(stars):
             try:
-                while galaxy_stars_active["value"] and build_gen["n"] == my_gen:
-                    if not app_active["value"]:
-                        await asyncio.sleep(1.0)
-                        continue
+                for _ in range(4):  # twinkle briefly, then keep the sky still (saves the phone's CPU)
+                    if not (galaxy_stars_active["value"] and build_gen["n"] == my_gen):
+                        return
                     for s in stars:
                         s.opacity = random.uniform(0.3, 1.0)
                     _refresh(background_layer)
-                    await asyncio.sleep(1.8)
+                    await asyncio.sleep(2.5)
             except Exception:
                 pass
 
@@ -742,8 +782,8 @@ async def build_ui(page: ft.Page):
             content=logo_image,
             scale=1.0,
             rotate=0,
-            animate_scale=ft.Animation(3300, ft.AnimationCurve.EASE_IN_OUT),
-            animate_rotation=ft.Animation(18000, ft.AnimationCurve.LINEAR),
+            animate_scale=ft.Animation(1100, ft.AnimationCurve.EASE_IN_OUT),
+            animate_rotation=ft.Animation(2400, ft.AnimationCurve.EASE_IN_OUT),
         )
 
         logo_backing_square = ft.Container(
@@ -752,7 +792,7 @@ async def build_ui(page: ft.Page):
             bgcolor="black",
             border_radius=10,
             rotate=0,
-            animate_rotation=ft.Animation(18000, ft.AnimationCurve.LINEAR),
+            animate_rotation=ft.Animation(2400, ft.AnimationCurve.EASE_IN_OUT),
         )
 
         logo_stack = ft.Stack(
@@ -769,36 +809,40 @@ async def build_ui(page: ft.Page):
 
         async def animate_logo_pulse_loop():
             try:
-                while build_gen["n"] == my_gen:
-                    if not app_active["value"]:
-                        await asyncio.sleep(1.0)
-                        continue
+                for _ in range(2):  # pulse twice on open, then rest
+                    if build_gen["n"] != my_gen:
+                        return
                     logo_container.scale = 1.08
                     _refresh(logo_container)
-                    await asyncio.sleep(3.3)
+                    await asyncio.sleep(1.2)
                     logo_container.scale = 1.0
                     _refresh(logo_container)
-                    await asyncio.sleep(3.3)
+                    await asyncio.sleep(1.2)
             except Exception:
                 pass
 
+        logo_spin_state = {"angle": 0.0, "square": 0.0}
+
         async def animate_logo_spin_loop():
-            angle = 0.0
-            square_angle = 0.0
+            angle = logo_spin_state["angle"]
+            square_angle = logo_spin_state["square"]
             full_turn = 6.28318530718
             try:
-                while build_gen["n"] == my_gen:
-                    if not app_active["value"]:
-                        await asyncio.sleep(1.0)
-                        continue
+                # One turn when the app opens (and again whenever you tap the logo).
+                if build_gen["n"] == my_gen:
                     angle += full_turn
                     square_angle -= full_turn
+                    logo_spin_state["angle"], logo_spin_state["square"] = angle, square_angle
                     logo_container.rotate = angle
                     logo_backing_square.rotate = square_angle
                     _refresh(logo_container, logo_backing_square)
-                    await asyncio.sleep(18.0)
             except Exception:
                 pass
+
+        def _spin_on_tap(e):
+            asyncio.create_task(animate_logo_spin_loop())
+
+        logo_wrapper.on_click = _spin_on_tap
 
         header_text = ft.Container(
             content=ft.Text(
@@ -1485,45 +1529,71 @@ async def build_ui(page: ft.Page):
             async with ingest_lock:
                 await _ingest_pending_notifications()
 
-        async def _ingest_pending_notifications():
-            if parse_bank_notification is None:
-                return
+        def _read_inbox_tail(path, max_bytes=8_000_000):
+            """Reads the inbox (at most its last 8 MB). Bank/SMS lines are all kept (up to 800);
+            chat-app lines, which are only shown in the "All apps" log, are cut to the newest 60."""
+            with open(path, "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - max_bytes))
+                data = f.read()
+            text = data.decode("utf-8", errors="replace")
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+            if size > max_bytes and lines:
+                lines = lines[1:]  # first line may be cut in half
+            def _pkg_of(ln):
+                m = re.search(r'"package"\s*:\s*"([^"]*)"', ln[:200])
+                return m.group(1) if m else ""
+            chat_idx = [i for i, ln in enumerate(lines) if _is_chat_app(_pkg_of(ln))]
+            keep_chat = set(chat_idx[-60:])
+            chat_set = set(chat_idx)
+            other_idx = [i for i in range(len(lines)) if i not in chat_set][-800:]
+            keep = sorted(set(other_idx) | keep_chat)
+            return [lines[i] for i in keep]
+
+        def _process_inbox_sync(alert_rules):
+            """All the slow work (file reading, parsing, regexes, saving the log files).
+            Runs in a background thread so the screen never freezes while alerts are read.
+            Returns (new_transactions, added, skipped, dupes) or None if there was nothing to do."""
             if not (os.path.exists(NOTIF_INBOX_FILE) or os.path.exists(NOTIF_INBOX_FILE + ".processing")):
-                return
+                return None
             # Move the inbox aside first: the listener then starts a fresh file, so an alert
             # that arrives while we are reading can't be wiped by the clean-up.
             processing = NOTIF_INBOX_FILE + ".processing"
             try:
                 if not os.path.exists(processing):
                     os.replace(NOTIF_INBOX_FILE, processing)
-                with open(processing, "r") as f:
-                    lines = [ln.strip() for ln in f if ln.strip()]
-                os.remove(processing)
+                lines = _read_inbox_tail(processing)
             except Exception:
-                return
+                lines = []
+            try:
+                os.remove(processing)  # always clear it, so a bad file can't block every future check
+            except Exception:
+                pass
             if not lines:
-                return
-            # After a long time away the inbox can hold thousands of chat notifications.
-            # Only the newest 400 matter; reading them all froze the app on return.
-            lines = lines[-400:]
+                return None
 
             seen = _load_seen_packages()
             recent = _read_json(NOTIF_RECENT_FILE, [])
             processed = _read_json(NOTIF_PROCESSED_FILE, [])
             processed_set = set(processed)
-            transactions = await load_transactions()
-            alert_rules = await load_alert_rules()
+            new_txns = []
             added = skipped = dupes = 0
+            latest = 0
 
             for line in lines:
                 try:
                     raw = json.loads(line)
                 except Exception:
-                    continue
-                pkg = raw.get("package", "")
-                title = raw.get("title", "") or ""
-                text = raw.get("text", "") or ""
-                posted_at = raw.get("posted_at", 0) or 0
+                    continue  # a half-written line must never lose the rest of the batch
+                pkg = raw.get("package", "") or ""
+                title = (raw.get("title", "") or "")[:200]
+                text = (raw.get("text", "") or "")[:1500]  # bank alerts are short; cap huge chat texts
+                try:
+                    posted_at = int(raw.get("posted_at", 0) or 0)
+                except Exception:
+                    posted_at = 0
+                latest = max(latest, posted_at)
 
                 info = seen.get(pkg, {"count": 0, "sample": ""})
                 info["count"] = info.get("count", 0) + 1
@@ -1532,12 +1602,23 @@ async def build_ui(page: ft.Page):
 
                 # Messaging apps re-post the same notification when a conversation updates.
                 legacy_key = f"{pkg}|{title}|{text}"
-                key = hashlib.md5(legacy_key.encode("utf-8", "ignore")).hexdigest()[:16]  # small, fast to save
+                key = hashlib.md5(legacy_key.encode("utf-8", "ignore")).hexdigest()[:16]
                 if key in processed_set or legacy_key in processed_set:
                     dupes += 1
                     continue
                 processed_set.add(key)
                 processed.append(key)
+
+                # Chat apps never carry bank alerts: log them for "All apps" but skip the parser.
+                if _is_chat_app(pkg):
+                    recent.insert(0, {
+                        "id": key + str(posted_at), "time": datetime.datetime.now().strftime("%d %b %H:%M"),
+                        "package": pkg, "title": title[:40], "text": text[:220],
+                        "date": datetime.date.today().isoformat(), "direction": "unknown", "amount": None,
+                        "category": "Other", "note": (title or pkg)[:60], "status": "ignored",
+                    })
+                    skipped += 1
+                    continue
 
                 try:
                     entry_date = datetime.datetime.fromtimestamp(posted_at / 1000).date().isoformat() if posted_at else datetime.date.today().isoformat()
@@ -1550,7 +1631,7 @@ async def build_ui(page: ft.Page):
                     txn = None
 
                 rec = {
-                    "id": str(abs(hash(key))) + str(posted_at),
+                    "id": key + str(posted_at),
                     "time": datetime.datetime.now().strftime("%d %b %H:%M"),
                     "package": pkg, "title": title[:40], "text": text[:220],
                     "date": entry_date,
@@ -1566,7 +1647,7 @@ async def build_ui(page: ft.Page):
 
                 if (txn is not None and getattr(txn, "strict", False) and txn.amount is not None
                         and txn.direction in ("credit", "debit")):
-                    transactions.insert(0, {
+                    new_txns.append({
                         "type": "income" if txn.direction == "credit" else "expense",
                         "category": rec["category"],
                         "amount": txn.amount,
@@ -1579,26 +1660,39 @@ async def build_ui(page: ft.Page):
                 else:
                     if _is_sms_app(pkg) and "hidden" in text.lower() and len(text) < 80:
                         rec["status"] = "hidden"
-                    elif rec["amount"] is not None and not _is_chat_app(pkg):
+                    elif rec["amount"] is not None:
                         rec["status"] = "possible"
                     skipped += 1
 
                 recent.insert(0, rec)
 
-            latest = 0
-            for l in lines:
-                try:
-                    latest = max(latest, int(json.loads(l).get("posted_at", 0) or 0))
-                except Exception:
-                    pass  # a half-written line must never lose the rest of the batch
             if latest:
                 seen["_last_capture_ms"] = max(latest, seen.get("_last_capture_ms", 0))
             _write_json(NOTIF_SEEN_PACKAGES_FILE, seen)
             _write_json(NOTIF_RECENT_FILE, recent[:40])
             _write_json(NOTIF_PROCESSED_FILE, processed[-1500:])
+            return new_txns, added, skipped, dupes
+
+        async def _ingest_pending_notifications():
+            if parse_bank_notification is None:
+                return
+            if not (os.path.exists(NOTIF_INBOX_FILE) or os.path.exists(NOTIF_INBOX_FILE + ".processing")):
+                return
+            alert_rules = await load_alert_rules()
+            try:
+                result = await asyncio.to_thread(_process_inbox_sync, alert_rules)
+            except Exception:
+                return
+            if not result:
+                return
+            new_txns, added, skipped, dupes = result
             notif_sync_state.update(added=added, skipped=skipped, dupes=dupes,
                                     last_run=datetime.datetime.now().strftime("%H:%M:%S"))
-            if added:
+            if new_txns:
+                # Load the list only now, right before saving, so nothing typed meanwhile is lost.
+                transactions = await load_transactions()
+                for t in new_txns:  # newest alert ends up on top
+                    transactions.insert(0, t)
                 await save_transactions(transactions[:10000])
 
         async def open_notification_sync_dialog(e):
@@ -2710,16 +2804,10 @@ async def build_ui(page: ft.Page):
                 await ingest_pending_notifications()
             mt_month_label.value = datetime.date(current_view_date["year"], current_view_date["month"], 1).strftime("%B %Y")
 
-            bounce_icon_containers = []
-
             def bouncy_icon(cat, size=16, color="white"):
-                c = ft.Container(
-                    content=ft.Icon(category_icon(cat), size=size, color=color),
-                    scale=0,
-                    animate_scale=ft.Animation(600, ft.AnimationCurve.BOUNCE_OUT),
-                )
-                bounce_icon_containers.append(c)
-                return c
+                # Plain icon: the old bounce-in animation forced a second full-page redraw on
+                # every refresh, which made the app feel frozen once there were many entries.
+                return ft.Icon(category_icon(cat), size=size, color=color)
 
             transactions = await load_transactions()
             view_year = current_view_date["year"]
@@ -3014,10 +3102,6 @@ async def build_ui(page: ft.Page):
                 mt_transactions_list_view.controls = [ft.Text(f"No results for '{mt_search_input.value}'.", color=DARK_TEXT, size=12)]
             else:
                 mt_transactions_list_view.controls = [ft.Text("No transactions this month. Tap a row to edit.", color=DARK_TEXT, size=12)]
-            page.update()
-            await asyncio.sleep(0.25)
-            for c in bounce_icon_containers:
-                c.scale = 1
             page.update()
 
         async def go_prev_month(e):
@@ -3941,14 +4025,14 @@ async def build_ui(page: ft.Page):
                             fall_ms = random.randint(2500, 4500)
                             drop.animate_position = ft.Animation(fall_ms, ft.AnimationCurve.LINEAR)
                             drop.top = random.randint(820, 900)
-                            page.update()
+                            drop.update()  # only this coin, not the whole page
                             await asyncio.sleep(fall_ms / 1000)
                             if not twinkle_active["value"]:
                                 break
                             drop.animate_position = ft.Animation(0, ft.AnimationCurve.LINEAR)
                             drop.top = random.randint(-500, -20)
                             drop.left = random.randint(5, 340)
-                            page.update()
+                            drop.update()
                             await asyncio.sleep(0.05)
                     except Exception:
                         pass
@@ -3962,7 +4046,7 @@ async def build_ui(page: ft.Page):
                         while twinkle_active["value"]:
                             for s in sparkles:
                                 s.opacity = random.uniform(0.15, 1.0)
-                            page.update()
+                                s.update()
                             await asyncio.sleep(1.2)
                     except Exception:
                         pass
@@ -5566,14 +5650,14 @@ async def build_ui(page: ft.Page):
                 if not app_active["value"]:
                     return
                 now = asyncio.get_event_loop().time()
-                if now - last_tilt_update["time"] < 0.12:
+                if now - last_tilt_update["time"] < 0.3:
                     return
                 last_tilt_update["time"] = now
 
                 tilt_x = max(-9.8, min(9.8, e.x))
                 tilt_y = max(-9.8, min(9.8, e.y))
                 # Ignore tiny sensor jitter so a phone lying still doesn't redraw the screen 8x a second.
-                if abs(tilt_x - last_tilt_update.get("x", 99)) < 0.35 and abs(tilt_y - last_tilt_update.get("y", 99)) < 0.35:
+                if abs(tilt_x - last_tilt_update.get("x", 99)) < 0.8 and abs(tilt_y - last_tilt_update.get("y", 99)) < 0.8:
                     return
                 last_tilt_update["x"], last_tilt_update["y"] = tilt_x, tilt_y
 
@@ -5599,7 +5683,7 @@ async def build_ui(page: ft.Page):
             ft.Accelerometer(
                 on_reading=handle_tilt_reading,
                 on_error=handle_tilt_error,
-                interval=ft.Duration(milliseconds=200),
+                interval=ft.Duration(milliseconds=300),
                 cancel_on_error=False,
             )
         )
