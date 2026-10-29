@@ -22,7 +22,7 @@ jobs:
           java-version: '17'
 
       - name: Install Flet and dependencies
-        run: pip install flet==0.83.0 flet-ads flet-audio fpdf2
+        run: pip install flet==0.83.0 flet-ads==0.83.0 flet-audio==0.83.0 fpdf2
 
       - name: Decode keystore from secret
         run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$GITHUB_WORKSPACE/upload-keystore.jks"
@@ -30,10 +30,13 @@ jobs:
       - name: Verify keystore is valid
         run: keytool -list -keystore "$GITHUB_WORKSPACE/upload-keystore.jks" -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
 
+      # --build-number uses this workflow's run count, so every AAB you upload
+      # has a higher version code than the last one (Google Play requires that).
       - name: Build signed AAB
         run: |
           flet build aab \
             --yes \
+            --build-number ${{ github.run_number }} \
             --android-signing-key-store "$GITHUB_WORKSPACE/upload-keystore.jks" \
             --android-signing-key-alias "${{ secrets.KEY_ALIAS }}" \
             --android-signing-key-store-password "${{ secrets.KEYSTORE_PASSWORD }}" \
