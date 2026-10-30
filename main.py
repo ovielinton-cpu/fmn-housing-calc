@@ -225,6 +225,32 @@ def to_number(text, required=False):
     return value
 
 
+# Nigerian bank transfer (NIP) fees, VAT included: ₦10 / ₦25 / ₦50 + 7.5% VAT.
+_NIP_FEE_BANDS = ((5_000.0, 10.75), (50_000.0, 26.88), (float("inf"), 53.75))
+_TRANSFER_WORDS = ("TRF", "TRANSFER", "MOB/", "NIP", "FT/", "NEFT", "USSD", "MOBILE", "TO ")
+
+
+def split_transfer_fee(amount, text):
+    """A transfer alert often shows price + fee as one debit, e.g. ₦6,026.88 = ₦6,000 + ₦26.88.
+    Splits it only when it is clearly a transfer AND the leftover is exactly the official fee
+    for that amount band, so ordinary purchases like ₦1,226.88 are left alone.
+    Returns (amount_without_fee, fee)."""
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return amount, 0.0
+    upper = f" {(text or '').upper()} "
+    if not any(w in upper for w in _TRANSFER_WORDS):
+        return amount, 0.0
+    for limit, fee in _NIP_FEE_BANDS:
+        base = round(amount - fee, 2)
+        if base > 0 and abs(base - round(base)) < 0.005:
+            band_fee = next(f for lim, f in _NIP_FEE_BANDS if base <= lim)
+            if band_fee == fee:
+                return float(round(base)), fee
+    return amount, 0.0
+
+
 def safe_filename(name):
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(name or "")).strip("_") or "File"
 
@@ -1706,11 +1732,13 @@ async def build_ui(page: ft.Page):
 
                 if (txn is not None and getattr(txn, "strict", False) and txn.amount is not None
                         and txn.direction in ("credit", "debit")):
+                    base_amt, fee_amt = (split_transfer_fee(txn.amount, f"{title} {text}")
+                                         if txn.direction == "debit" else (txn.amount, 0.0))
                     new_txns.append({
                         "type": "income" if txn.direction == "credit" else "expense",
                         "category": rec["category"],
-                        "amount": txn.amount,
-                        "charge": 0.0,
+                        "amount": base_amt,
+                        "charge": fee_amt,
                         "note": f"Auto: {rec['note']}",
                         "date": entry_date,
                         "time": entry_time,
