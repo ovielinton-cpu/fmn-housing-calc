@@ -380,7 +380,8 @@ async def build_ui(page: ft.Page):
                 ft.Text("Terms and Conditions", size=18, weight=ft.FontWeight.BOLD, color=PURPLE_TEXT),
                 ft.Text(
                     "1. Purpose: This application is provided as a general tool to help staff of any organization estimate their housing upfront payments and salary breakdowns, based on figures you enter yourself.\n\n"
-                    "2. Accuracy: All calculations, including PAYE tax estimates, are based on the Nigeria Tax Act 2025 as understood at the time of writing and are for guidance only. Verify against your organization's official payroll policy and current tax law.\n\n"
+                    "2. Accuracy: All calculations, including PAYE tax estimates, are based on the Nigeria Tax Act 2025 as understood at the time of writing and are for guidance only. Verify against your organization's official payroll policy and current tax law. Official sources: Nigeria Revenue Service (www.nrs.gov.ng) for PAYE and the Nigeria Tax Act 2025; National Pension Commission (www.pencom.gov.ng) for pension; Federal Mortgage Bank of Nigeria (www.fmbn.gov.ng) for the National Housing Fund.\n\n"
+                    "Not a government app: Naira Finance Hub is an independent app. It is not affiliated with, endorsed by, or representing the Nigerian government or any government agency.\n\n"
                     "3. Disclaimer: The developer is not responsible for any financial or tax decisions made based on these calculations. Please consult your HR department or a tax professional for official confirmation.\n\n"
                     "4. Privacy: Your salary figures, transactions, Ajo groups and other entries are stored only on your device and are never sent to the developer. The app shows ads from Google AdMob; to serve and measure ads, Google may collect device information such as your advertising ID and approximate location, as described in Google's privacy policy (policies.google.com/privacy). You can reset or delete your advertising ID in your phone's Settings → Google → Ads.",
                     color=DARK_TEXT,
@@ -1309,8 +1310,32 @@ async def build_ui(page: ft.Page):
             size=11, color="white", text_align=ft.TextAlign.CENTER, italic=True
         )
 
+        def _source_line(label, url):
+            return ft.Text(spans=[
+                ft.TextSpan(f"{label}: ", ft.TextStyle(color="white", size=11)),
+                ft.TextSpan(url.replace("https://", ""), ft.TextStyle(color="#FFD54F", size=11, weight=ft.FontWeight.BOLD,
+                                                                   decoration=ft.TextDecoration.UNDERLINE), url=url),
+            ], text_align=ft.TextAlign.CENTER)
+
+        # Google Play requires the official source of any government information (tax/pension/NHF
+        # rules) and a clear statement that the app is not a government app.
+        sm_sources = ft.Container(
+            content=ft.Column([
+                ft.Text("Official sources (tap to open)", size=12, color="#FFD700", weight=ft.FontWeight.BOLD,
+                        text_align=ft.TextAlign.CENTER),
+                _source_line("PAYE tax bands – Nigeria Tax Act 2025 (Nigeria Revenue Service)", "https://www.nrs.gov.ng/"),
+                _source_line("Pension 8% – Pension Reform Act 2014 (PenCom)", "https://www.pencom.gov.ng/"),
+                _source_line("NHF 2.5% – National Housing Fund (FMBN)", "https://www.fmbn.gov.ng/"),
+                ft.Text("Naira Finance Hub is an independent app. It is not affiliated with, endorsed by, "
+                        "or representing the Nigerian government or any government agency.",
+                        size=10, color="white", italic=True, text_align=ft.TextAlign.CENTER),
+            ], spacing=4, horizontal_alignment=ft.CrossAxisAlignment.CENTER, tight=True),
+            padding=10, border_radius=10,
+            bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
+        )
+
         salary_tab_content = ft.Column(
-            controls=[sm_form, ft.Container(height=10), sm_results, sm_note],
+            controls=[sm_form, ft.Container(height=10), sm_results, sm_note, sm_sources],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=10,
         )
