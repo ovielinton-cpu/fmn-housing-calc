@@ -119,6 +119,41 @@ def _install_fast_patch():
 
 _install_fast_patch()
 
+
+# ---------------------------------------------------------------------------
+# Vibrate on tap: every button/card tap the phone sends to Python passes through
+# Session.dispatch_event. We wrap it once so the app can give a short buzz on each
+# tap (when "Vibrate on tap" is switched on in the Menu) without touching every button.
+# ---------------------------------------------------------------------------
+_TAP_HOOK = {"fn": None}
+_TAP_EVENTS = {"click", "tap", "long_press"}
+
+
+def _install_tap_hook():
+    try:
+        from flet.messaging.session import Session
+    except Exception:
+        return
+    if getattr(Session, "_nfh_tap_hook", False) or not hasattr(Session, "dispatch_event"):
+        return
+    original_dispatch = Session.dispatch_event
+
+    async def dispatch_event(self, control_id, event_name, event_data, *args, **kwargs):
+        if event_name in _TAP_EVENTS:
+            fn = _TAP_HOOK["fn"]
+            if fn is not None:
+                try:
+                    fn()
+                except Exception:
+                    pass
+        return await original_dispatch(self, control_id, event_name, event_data, *args, **kwargs)
+
+    Session.dispatch_event = dispatch_event
+    Session._nfh_tap_hook = True
+
+
+_install_tap_hook()
+
 # ---------------------------------------------------------------------------
 # Branded data files: backups and shared Ajo groups are saved as a PNG picture
 # (app logo + label) with the real data tucked inside a private PNG chunk, so the
@@ -709,6 +744,40 @@ async def build_ui(page: ft.Page):
             page.services.append(_snd)
         draw_sound = {"on": True, "music_playing": False}
 
+        # ---- Settings from the Menu: "Motion effects" and "Vibrate on tap" (both On by default) ----
+        async def _load_flag(key, default=True):
+            try:
+                val = await page.shared_preferences.get(key)
+            except Exception:
+                return default
+            if val is None or val == "":
+                return default
+            return str(val).lower() in ("1", "true", "on", "yes")
+
+        motion = {"on": await _load_flag("motion_effects")}
+        haptic = {"on": await _load_flag("vibrate_on_tap")}
+        haptics = ft.HapticFeedback()
+        page.services.append(haptics)
+        haptic_busy = {"value": False}
+
+        async def _buzz():
+            if haptic_busy["value"]:
+                return
+            haptic_busy["value"] = True
+            try:
+                await asyncio.wait_for(haptics.light_impact(), timeout=1.5)
+            except Exception:
+                pass
+            finally:
+                haptic_busy["value"] = False
+
+        def _on_any_tap():
+            if haptic["on"] and build_gen["n"] == my_gen:
+                asyncio.create_task(_buzz())
+
+        _TAP_HOOK["fn"] = _on_any_tap
+        settings_actions = {}
+
         async def start_draw_music():
             if draw_sound["on"] and not draw_sound["music_playing"]:
                 try:
@@ -768,7 +837,7 @@ async def build_ui(page: ft.Page):
         async def animate_wave_loop():
             try:
                 while build_gen["n"] == my_gen:
-                    if not app_active["value"]:
+                    if not app_active["value"] or not motion["on"]:
                         await asyncio.sleep(1.0)  # resting while the app is in the background
                         continue
                     for angle, pause in ((0.35, 0.3), (-0.35, 0.3), (0.35, 0.3), (0, 1.5)):
@@ -804,7 +873,7 @@ async def build_ui(page: ft.Page):
         async def twinkle_galaxy(stars):
             try:
                 while galaxy_stars_active["value"] and build_gen["n"] == my_gen:
-                    if not app_active["value"]:
+                    if not app_active["value"] or not motion["on"]:
                         await asyncio.sleep(1.0)
                         continue
                     for s in stars:
@@ -896,7 +965,7 @@ async def build_ui(page: ft.Page):
         async def animate_logo_pulse_loop():
             try:
                 while build_gen["n"] == my_gen:
-                    if not app_active["value"]:
+                    if not app_active["value"] or not motion["on"]:
                         await asyncio.sleep(1.0)
                         continue
                     logo_container.scale = 1.08
@@ -914,7 +983,7 @@ async def build_ui(page: ft.Page):
             full_turn = 6.28318530718
             try:
                 while build_gen["n"] == my_gen:
-                    if not app_active["value"]:
+                    if not app_active["value"] or not motion["on"]:
                         await asyncio.sleep(1.0)
                         continue
                     angle += full_turn
@@ -3665,7 +3734,43 @@ async def build_ui(page: ft.Page):
             if any(os.path.exists(f) for f in (NOTIF_INBOX_FILE, NOTIF_INBOX_FILE + ".processing",
                                                NOTIF_SEEN_PACKAGES_FILE, NOTIF_RECENT_FILE)):
                 rows.append(make_option_row(ft.Icons.SYNC_ROUNDED, "Notification Sync", "#2E8B57", open_notification_sync_dialog))
+            def make_switch_row(icon, label, color, value, on_toggle):
+                async def changed(e):
+                    await on_toggle(e.control.value)
+                return ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(icon, color=color, size=20),
+                            ft.Text(label, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14, expand=True),
+                            ft.Switch(value=value, on_change=changed, active_color="#4B0082"),
+                        ],
+                        spacing=12,
+                    ),
+                    width=240,
+                    padding=ft.Padding(left=12, right=0, top=0, bottom=0),
+                )
+
+            async def toggle_haptic(on):
+                haptic["on"] = bool(on)
+                try:
+                    await page.shared_preferences.set("vibrate_on_tap", "on" if on else "off")
+                except Exception:
+                    pass
+                if on:
+                    await _buzz()
+
+            async def toggle_motion(on):
+                fn = settings_actions.get("motion")
+                if fn:
+                    await fn(on)
+
             rows += [
+                ft.Divider(height=1, color="#DDDDDD"),
+                ft.Text("Settings", color="#888888", size=11, weight=ft.FontWeight.BOLD),
+                make_switch_row(ft.Icons.VIBRATION_ROUNDED, "Vibrate on tap", "#8E24AA", haptic["on"], toggle_haptic),
+                make_switch_row(ft.Icons.AUTO_AWESOME_ROUNDED, "Motion effects", "#FF8C00", motion["on"], toggle_motion),
+                ft.Text("Turn Motion effects off if the app feels slow on your phone.", color="#888888", size=11),
+                ft.Divider(height=1, color="#DDDDDD"),
                 make_sync_option_row(ft.Icons.HELP_OUTLINE_ROUNDED, "Backup & Restore Help", "#C62828", show_backup_help),
                 make_sync_option_row(ft.Icons.SCHOOL_ROUNDED, "Replay Tutorial", "#FFD700", lambda e: show_tutorial_screen()),
             ]
@@ -5637,10 +5742,17 @@ async def build_ui(page: ft.Page):
         tab_icons = [ft.Icons.HOME_ROUNDED, ft.Icons.WORK_ROUNDED, ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, ft.Icons.GROUPS_ROUNDED]
         tab_icon_colors = ["#FF8C00", "#E53935", "#1E88E5", "#8E24AA"]
         tab_contents = [housing_tab_content, salary_tab_content, money_tab_content, ajo_tab_content]
-        current_tab_index = {"value": 0}
+        # Reopen on the page you were on last time (e.g. Ajo Groups).
+        try:
+            start_tab = int(await page.shared_preferences.get("last_tab") or 0)
+        except Exception:
+            start_tab = 0
+        if not 0 <= start_tab < len(tab_contents):
+            start_tab = 0
+        current_tab_index = {"value": start_tab}
 
         tab_content_area = ft.Container(
-            content=ft.Container(content=tab_contents[0], padding=ft.Padding(top=15, left=0, right=0, bottom=0)),
+            content=ft.Container(content=tab_contents[start_tab], padding=ft.Padding(top=15, left=0, right=0, bottom=0)),
             opacity=1,
             scale=1,
             animate_opacity=ft.Animation(220, ft.AnimationCurve.EASE_OUT),
@@ -5648,7 +5760,7 @@ async def build_ui(page: ft.Page):
         )
 
         current_tab_title = ft.Row(
-            [ft.Icon(tab_icons[0], size=20, color=tab_icon_colors[0]), ft.Text(tab_labels[0], size=18, weight=ft.FontWeight.BOLD, color="white")],
+            [ft.Icon(tab_icons[start_tab], size=20, color=tab_icon_colors[start_tab]), ft.Text(tab_labels[start_tab], size=18, weight=ft.FontWeight.BOLD, color="white")],
             alignment=ft.MainAxisAlignment.CENTER,
             spacing=8,
         )
@@ -5663,14 +5775,20 @@ async def build_ui(page: ft.Page):
                 current_tab_title.controls[0].color = tab_icon_colors[idx]
                 current_tab_title.controls[1].value = tab_labels[idx]
 
-                tab_content_area.opacity = 0
-                tab_content_area.scale = 0.96
-                page.update()
-                await asyncio.sleep(0.18)
+                # Only redraw the tab area (not the whole app) so switching pages feels instant.
+                if motion["on"]:
+                    tab_content_area.opacity = 0
+                    tab_content_area.scale = 0.96
+                    _refresh(current_tab_title, tab_content_area)
+                    await asyncio.sleep(0.15)
                 tab_content_area.content = ft.Container(content=tab_contents[idx], padding=ft.Padding(top=15, left=0, right=0, bottom=0))
                 tab_content_area.opacity = 1
                 tab_content_area.scale = 1
-                page.update()
+                _refresh(current_tab_title, tab_content_area)
+                try:
+                    await page.shared_preferences.set("last_tab", str(idx))
+                except Exception:
+                    pass
             return handler
 
         tab_title_bar = ft.Container(
@@ -5768,7 +5886,7 @@ async def build_ui(page: ft.Page):
 
         def handle_tilt_reading(e: ft.AccelerometerReadingEvent):
             try:
-                if not app_active["value"]:
+                if not app_active["value"] or not motion["on"]:
                     return
                 now = asyncio.get_event_loop().time()
                 if now - last_tilt_update["time"] < 0.12:
@@ -5800,14 +5918,49 @@ async def build_ui(page: ft.Page):
         def handle_tilt_error(e: ft.SensorErrorEvent):
             pass
 
-        page.services.append(
-            ft.Accelerometer(
-                on_reading=handle_tilt_reading,
-                on_error=handle_tilt_error,
-                interval=ft.Duration(milliseconds=120),
-                cancel_on_error=False,
-            )
-        )
+        tilt_sensor = {"control": None}
+
+        def start_tilt_sensor():
+            if tilt_sensor["control"] is None:
+                tilt_sensor["control"] = ft.Accelerometer(
+                    on_reading=handle_tilt_reading,
+                    on_error=handle_tilt_error,
+                    interval=ft.Duration(milliseconds=120),
+                    cancel_on_error=False,
+                )
+                page.services.append(tilt_sensor["control"])
+
+        def stop_tilt_sensor():
+            sensor = tilt_sensor["control"]
+            tilt_sensor["control"] = None
+            if sensor is not None:
+                try:
+                    page.services.remove(sensor)
+                except Exception:
+                    pass
+            # Put the background and logo back in the middle.
+            background_layer.left = background_layer.top = -TILT_OVERSCAN
+            background_layer.right = background_layer.bottom = -TILT_OVERSCAN
+            logo_wrapper.offset = ft.Offset(0, 0)
+
+        if motion["on"]:
+            start_tilt_sensor()
+
+        async def set_motion_effects(on):
+            motion["on"] = bool(on)
+            try:
+                await page.shared_preferences.set("motion_effects", "on" if on else "off")
+            except Exception:
+                pass
+            if on:
+                start_tilt_sensor()
+            else:
+                stop_tilt_sensor()
+                logo_container.scale = 1.0
+                wave_hand.rotate = 0
+            page.update()
+
+        settings_actions["motion"] = set_motion_effects
 
         hamburger_positioned = ft.Container(
             content=hamburger_menu_btn,
