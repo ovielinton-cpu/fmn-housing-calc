@@ -3683,49 +3683,72 @@ async def build_ui(page: ft.Page):
             shadow=ft.BoxShadow(blur_radius=4, color=ft.Colors.with_opacity(0.15, ft.Colors.BLACK)),
         )
 
-        def open_more_options_menu(e):
-            def make_option_row(icon, label, color, action):
-                async def run_after_close(e):
+        # -------------------- MENUS --------------------
+        # Main menu: just the four pages (+ Settings). Money Tracker tools live in their own
+        # sub-menu, opened from the arrow beside "Money Tracker" or the Options button on that page.
+        def _menu_row_content(icon, label, color, trailing=None):
+            items = [ft.Icon(icon, color=color, size=20),
+                     ft.Text(label, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14, expand=True)]
+            if trailing is not None:
+                items.append(trailing)
+            return ft.Container(content=ft.Row(items, spacing=12), width=240)
+
+        def make_option_row(icon, label, color, action, trailing=None):
+            async def run_after_close(e):
+                page.pop_dialog()
+                await action(e)
+            return ft.TextButton(content=_menu_row_content(icon, label, color, trailing), on_click=run_after_close)
+
+        def make_sync_option_row(icon, label, color, action):
+            def handler(e):
+                page.pop_dialog()
+                action(e)
+            return ft.TextButton(content=_menu_row_content(icon, label, color), on_click=handler)
+
+        def make_switch_row(icon, label, color, value, on_toggle):
+            async def changed(e):
+                await on_toggle(e.control.value)
+            return ft.Container(
+                content=ft.Row(
+                    [
+                        ft.Icon(icon, color=color, size=20),
+                        ft.Text(label, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14, expand=True),
+                        ft.Switch(value=value, on_change=changed, active_color="#4B0082"),
+                    ],
+                    spacing=12,
+                ),
+                width=240,
+                padding=ft.Padding(left=12, right=0, top=0, bottom=0),
+            )
+
+        def show_menu_dialog(title, rows, height, back_to=None):
+            actions = []
+            if back_to is not None:
+                def go_back(e):
                     page.pop_dialog()
-                    await action(e)
-                return ft.TextButton(
-                    content=ft.Container(
-                        content=ft.Row(
-                            [ft.Icon(icon, color=color, size=20), ft.Text(label, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14)],
-                            spacing=12,
-                        ),
-                        width=240,
-                    ),
-                    on_click=run_after_close,
-                )
+                    back_to(e)
+                actions.append(ft.TextButton("Back", on_click=go_back, style=ft.ButtonStyle(color=PURPLE_TEXT)))
+            actions.append(ft.TextButton("Close", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)))
+            dlg = ft.AlertDialog(scrollable=True,
+                modal=True,
+                bgcolor="#FFFFFF",
+                title=ft.Text(title, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.ListView(controls=rows, spacing=4),
+                    width=270, height=height,
+                ),
+                actions=actions,
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            page.show_dialog(dlg)
 
-            def make_sync_option_row(icon, label, color, action):
-                def handler(e):
-                    page.pop_dialog()
-                    action(e)
-                return ft.TextButton(
-                    content=ft.Container(
-                        content=ft.Row(
-                            [ft.Icon(icon, color=color, size=20), ft.Text(label, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14)],
-                            spacing=12,
-                        ),
-                        width=240,
-                    ),
-                    on_click=handler,
-                )
-
-            nav_rows = [
-                make_option_row(tab_icons[i], tab_labels[i], tab_icon_colors[i], select_tab(i))
-                for i in range(len(tab_labels))
-            ]
-
-            rows = nav_rows + [
-                ft.Divider(height=1, color="#DDDDDD"),
-                ft.Text("More Options (Money Tracker)", color="#888888", size=11, weight=ft.FontWeight.BOLD),
+        def open_money_options_menu(e, from_main_menu=False):
+            rows = [
                 make_option_row(ft.Icons.PICTURE_AS_PDF_ROUNDED, "Export Month (PDF)", "#C62828", export_month_pdf),
                 make_option_row(ft.Icons.PICTURE_AS_PDF_ROUNDED, "Export Year (PDF)", "#C62828", export_year_pdf),
                 make_option_row(ft.Icons.BACKUP_ROUNDED, "Backup Data", "#1E88E5", backup_data),
                 make_option_row(ft.Icons.RESTORE_ROUNDED, "Restore Data", "#1E88E5", restore_data),
+                make_sync_option_row(ft.Icons.HELP_OUTLINE_ROUNDED, "Backup & Restore Help", "#1E88E5", show_backup_help),
                 make_option_row(ft.Icons.FLASH_ON_ROUNDED, "Quick Add Shortcuts", "#2E8B57", manage_quick_add_dialog),
                 make_option_row(ft.Icons.CATEGORY_ROUNDED, "Manage Categories", "#2E8B57", manage_categories_dialog),
             ]
@@ -3734,22 +3757,10 @@ async def build_ui(page: ft.Page):
             if any(os.path.exists(f) for f in (NOTIF_INBOX_FILE, NOTIF_INBOX_FILE + ".processing",
                                                NOTIF_SEEN_PACKAGES_FILE, NOTIF_RECENT_FILE)):
                 rows.append(make_option_row(ft.Icons.SYNC_ROUNDED, "Notification Sync", "#2E8B57", open_notification_sync_dialog))
-            def make_switch_row(icon, label, color, value, on_toggle):
-                async def changed(e):
-                    await on_toggle(e.control.value)
-                return ft.Container(
-                    content=ft.Row(
-                        [
-                            ft.Icon(icon, color=color, size=20),
-                            ft.Text(label, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=14, expand=True),
-                            ft.Switch(value=value, on_change=changed, active_color="#4B0082"),
-                        ],
-                        spacing=12,
-                    ),
-                    width=240,
-                    padding=ft.Padding(left=12, right=0, top=0, bottom=0),
-                )
+            show_menu_dialog("Money Tracker Options", rows, 460,
+                             back_to=open_more_options_menu if from_main_menu else None)
 
+        def open_settings_menu(e):
             async def toggle_haptic(on):
                 haptic["on"] = bool(on)
                 try:
@@ -3764,29 +3775,53 @@ async def build_ui(page: ft.Page):
                 if fn:
                     await fn(on)
 
-            rows += [
-                ft.Divider(height=1, color="#DDDDDD"),
-                ft.Text("Settings", color="#888888", size=11, weight=ft.FontWeight.BOLD),
+            rows = [
                 make_switch_row(ft.Icons.VIBRATION_ROUNDED, "Vibrate on tap", "#8E24AA", haptic["on"], toggle_haptic),
                 make_switch_row(ft.Icons.AUTO_AWESOME_ROUNDED, "Motion effects", "#FF8C00", motion["on"], toggle_motion),
                 ft.Text("Turn Motion effects off if the app feels slow on your phone.", color="#888888", size=11),
                 ft.Divider(height=1, color="#DDDDDD"),
-                make_sync_option_row(ft.Icons.HELP_OUTLINE_ROUNDED, "Backup & Restore Help", "#C62828", show_backup_help),
                 make_sync_option_row(ft.Icons.SCHOOL_ROUNDED, "Replay Tutorial", "#FFD700", lambda e: show_tutorial_screen()),
             ]
+            show_menu_dialog("Settings", rows, 260, back_to=open_more_options_menu)
 
-            dlg = ft.AlertDialog(scrollable=True, 
-                modal=True,
-                bgcolor="#FFFFFF",
-                title=ft.Text("Menu", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
-                content=ft.Container(
-                    content=ft.ListView(controls=rows, spacing=4),
-                    width=270, height=600,
-                ),
-                actions=[ft.TextButton("Close", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT))],
-                actions_alignment=ft.MainAxisAlignment.END,
-            )
-            page.show_dialog(dlg)
+        def open_more_options_menu(e):
+            def money_options_from_menu(e):
+                page.pop_dialog()
+                open_money_options_menu(e, from_main_menu=True)
+
+            rows = []
+            for i in range(len(tab_labels)):
+                if tab_labels[i] == "Money Tracker":
+                    trailing = ft.IconButton(
+                        icon=ft.Icons.CHEVRON_RIGHT_ROUNDED, icon_color=PURPLE_TEXT,
+                        tooltip="Money Tracker options", on_click=money_options_from_menu,
+                    )
+                else:
+                    trailing = None
+                rows.append(make_option_row(tab_icons[i], tab_labels[i], tab_icon_colors[i], select_tab(i), trailing))
+
+            def settings_from_menu(e):
+                page.pop_dialog()
+                open_settings_menu(e)
+
+            rows += [
+                ft.Divider(height=1, color="#DDDDDD"),
+                ft.TextButton(content=_menu_row_content(ft.Icons.SETTINGS_ROUNDED, "Settings", "#607D8B"),
+                              on_click=settings_from_menu),
+                ft.Text("Tip: tap the arrow beside Money Tracker for Backup, Restore, PDF export and more.",
+                        color="#888888", size=11),
+            ]
+            show_menu_dialog("Menu", rows, 400)
+
+        money_options_btn = ft.ElevatedButton(
+            content=ft.Row(
+                [ft.Icon(ft.Icons.TUNE_ROUNDED, size=16, color="white"),
+                 ft.Text("Options", color="white", weight=ft.FontWeight.BOLD)],
+                spacing=6, tight=True,
+            ),
+            on_click=lambda e: open_money_options_menu(e),
+            style=ft.ButtonStyle(bgcolor="#2E8B57"),
+        )
 
         hamburger_menu_btn = ft.Container(
             content=ft.IconButton(
@@ -3841,7 +3876,7 @@ async def build_ui(page: ft.Page):
 
         money_tab_content = ft.Column(
             controls=[
-                ft.Row([profile_switcher_btn], alignment=ft.MainAxisAlignment.CENTER), ft.Container(height=10),
+                ft.Row([profile_switcher_btn, money_options_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=10, wrap=True), ft.Container(height=10),
                 mt_quick_add_card, ft.Container(height=10),
                 mt_form, ft.Container(height=10),
                 mt_month_nav, ft.Container(height=5),
