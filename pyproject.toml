@@ -2,10 +2,29 @@
 name = "naira-finance-hub"
 version = "1.0.0"
 description = "An all-in-one financial tool for Nigerian staff: housing upfront calculator, salary/PAYE breakdown, personal money tracker, and Ajo (rotating savings group) manager."
+# The app's Python packages. (Listed here because the Android-only package below
+# makes "flet build" read this list instead of requirements.txt.)
+dependencies = [
+  "flet==0.83.0",
+  "flet-ads==0.83.0",
+  "flet-audio==0.83.0",
+  "fpdf2",
+]
 
 [tool.flet]
 product = "Naira Finance Hub"
 org = "com.linton"
+
+# Android only: pyjnius lets the app use the phone's vibrator directly
+# ("Vibrate on tap" now works on low-end phones too).
+[tool.flet.android]
+dependencies = [
+  "pyjnius",
+]
+
+# Allows the short buzz on tap. A normal permission: no pop-up, nothing to declare on Play.
+[tool.flet.android.permission]
+"android.permission.VIBRATE" = true
 
 # Required by Google AdMob (flet-ads). Without it the app closes as soon as it opens.
 [tool.flet.android.meta_data]

@@ -154,6 +154,103 @@ def _install_tap_hook():
 
 _install_tap_hook()
 
+
+# ---------------------------------------------------------------------------
+# Real phone vibration. Flutter's "haptic feedback" is silent on many low-end phones
+# (and whenever the phone's own "Touch vibration" setting is off), so on Android we call
+# the phone's vibrator directly. Needs pyjnius + the VIBRATE permission (pyproject.toml).
+# Returns False when that isn't possible, and the app then falls back to haptic feedback.
+# ---------------------------------------------------------------------------
+_NATIVE_VIBE = {"tried": False, "vibrator": None, "effect": None}
+
+
+def native_vibrate(ms=35):
+    st = _NATIVE_VIBE
+    if not st["tried"]:
+        st["tried"] = True
+        try:
+            from jnius import autoclass, cast
+            host = os.getenv("MAIN_ACTIVITY_HOST_CLASS_NAME")
+            if not host:
+                return False
+            activity = autoclass(host).mActivity
+            Context = autoclass("android.content.Context")
+            vib = cast("android.os.Vibrator", activity.getSystemService(Context.VIBRATOR_SERVICE))
+            if vib is None or not vib.hasVibrator():
+                return False
+            try:
+                VibrationEffect = autoclass("android.os.VibrationEffect")
+                st["effect"] = VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)
+            except Exception:
+                st["effect"] = None  # Android 7 and older
+            st["vibrator"] = vib
+        except Exception:
+            return False
+    vib = st["vibrator"]
+    if vib is None:
+        return False
+    try:
+        if st["effect"] is not None:
+            vib.vibrate(st["effect"])
+        else:
+            vib.vibrate(ms)
+        return True
+    except Exception:
+        st["vibrator"] = None  # e.g. permission missing: stop trying, use the fallback
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Faster start-up: every saved setting used to be fetched from the phone one at a time
+# (dozens of round trips before the first screen). Now they are all fetched together once,
+# kept in memory, and saves update both the memory copy and the phone.
+# ---------------------------------------------------------------------------
+class _PrefsCache:
+    _LAZY_PREFIXES = ("money_transactions_",)  # big lists: fetched only when needed
+
+    def __init__(self, real):
+        self.real = real
+        self.cache = {}
+        self.known_keys = set()
+        self.loaded = False
+
+    async def preload(self):
+        try:
+            keys = await asyncio.wait_for(self.real.get_keys(""), timeout=8)
+            keys = [k for k in (keys or []) if not k.startswith(self._LAZY_PREFIXES)]
+            values = await asyncio.wait_for(
+                asyncio.gather(*(self.real.get(k) for k in keys), return_exceptions=True), timeout=15)
+            for k, v in zip(keys, values):
+                if not isinstance(v, BaseException):
+                    self.cache[k] = v
+            self.known_keys = set(keys)
+            self.loaded = True
+        except Exception:
+            self.loaded = False
+
+    async def get(self, key):
+        if key in self.cache:
+            return self.cache[key]
+        value = await self.real.get(key)
+        self.cache[key] = value
+        return value
+
+    async def set(self, key, value):
+        self.cache[key] = value
+        return await self.real.set(key, value)
+
+    async def remove(self, key):
+        self.cache[key] = None
+        return await self.real.remove(key)
+
+    async def clear(self):
+        self.cache.clear()
+        self.loaded = False
+        return await self.real.clear()
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
 # ---------------------------------------------------------------------------
 # Branded data files: backups and shared Ajo groups are saved as a PNG picture
 # (app logo + label) with the real data tucked inside a private PNG chunk, so the
@@ -300,6 +397,7 @@ async def build_ui(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.adaptive = True
     page.padding = 0
+    prefs = _PrefsCache(page.shared_preferences)
 
     def with_length_warning(field, max_len, existing_handler=None):
         async def _check(e):
@@ -350,7 +448,7 @@ async def build_ui(page: ft.Page):
     # ==================================================================
     async def close_terms(e=None):
         try:
-            await page.shared_preferences.set("terms_accepted", True)
+            await prefs.set("terms_accepted", True)
             await check_name()
         except Exception as ex:
             show_error_screen(ex)
@@ -465,7 +563,7 @@ async def build_ui(page: ft.Page):
         async def save_name(e):
             new_name = name_field.value
             greeting_name.value = f"{new_name}!" if new_name else "Staff!"
-            await page.shared_preferences.set("user_name", new_name)
+            await prefs.set("user_name", new_name)
             page.pop_dialog()
             page.update()
 
@@ -620,7 +718,7 @@ async def build_ui(page: ft.Page):
             page.update()
 
         async def finish_tutorial(e=None):
-            await page.shared_preferences.set("tutorial_seen", True)
+            await prefs.set("tutorial_seen", True)
             await check_name()
 
         async def go_next(e):
@@ -687,7 +785,7 @@ async def build_ui(page: ft.Page):
     async def check_name():
         try:
             try:
-                tutorial_seen = await page.shared_preferences.get("tutorial_seen")
+                tutorial_seen = await prefs.get("tutorial_seen")
             except Exception:
                 tutorial_seen = False
 
@@ -695,7 +793,7 @@ async def build_ui(page: ft.Page):
                 show_tutorial_screen()
                 return
 
-            existing_name = await page.shared_preferences.get("user_name")
+            existing_name = await prefs.get("user_name")
             if not existing_name:
                 open_name_dialog()
             await build_main_app()
@@ -747,14 +845,16 @@ async def build_ui(page: ft.Page):
         # ---- Settings from the Menu: "Motion effects" and "Vibrate on tap" (both On by default) ----
         async def _load_flag(key, default=True):
             try:
-                val = await page.shared_preferences.get(key)
+                val = await prefs.get(key)
             except Exception:
                 return default
             if val is None or val == "":
                 return default
             return str(val).lower() in ("1", "true", "on", "yes")
 
-        motion = {"on": await _load_flag("motion_effects")}
+        # Off unless you switch it on: the moving background made buttons stop responding
+        # on low-end phones.
+        motion = {"on": await _load_flag("motion_effects", default=False)}
         haptic = {"on": await _load_flag("vibrate_on_tap")}
         haptics = ft.HapticFeedback()
         page.services.append(haptics)
@@ -765,7 +865,9 @@ async def build_ui(page: ft.Page):
                 return
             haptic_busy["value"] = True
             try:
-                await asyncio.wait_for(haptics.light_impact(), timeout=1.5)
+                if native_vibrate():
+                    return
+                await asyncio.wait_for(haptics.vibrate(), timeout=1.5)
             except Exception:
                 pass
             finally:
@@ -795,7 +897,7 @@ async def build_ui(page: ft.Page):
                 draw_sound["music_playing"] = False
 
         try:
-            saved_theme = await page.shared_preferences.get("theme_override")
+            saved_theme = await prefs.get("theme_override")
         except Exception:
             saved_theme = None
 
@@ -855,7 +957,7 @@ async def build_ui(page: ft.Page):
 
         def build_galaxy_background():
             stars = []
-            for _ in range(100):
+            for _ in range(100 if motion["on"] else 45):
                 dot_size = random.choice([2, 3, 3, 4, 4, 5])
                 stars.append(
                     ft.Container(
@@ -865,7 +967,7 @@ async def build_ui(page: ft.Page):
                         left=random.randint(5, 340),
                         top=random.randint(10, 780),
                         opacity=random.uniform(0.35, 1.0),
-                        animate_opacity=ft.Animation(random.randint(1200, 2400), ft.AnimationCurve.EASE_IN_OUT),
+                        animate_opacity=ft.Animation(random.randint(1200, 2400), ft.AnimationCurve.EASE_IN_OUT) if motion["on"] else None,
                     )
                 )
             return stars, ft.Stack(controls=[ft.Container(bgcolor="#0D0D1A", expand=True)] + stars, expand=True)
@@ -899,7 +1001,7 @@ async def build_ui(page: ft.Page):
                 background_layer.bgcolor = None
                 mode_badge_icon.icon = ft.Icons.LIGHT_MODE_ROUNDED
                 mode_badge_text.value = "Light Mode"
-            await page.shared_preferences.set("theme_override", "dark" if dark_mode_state["value"] else "light")
+            await prefs.set("theme_override", "dark" if dark_mode_state["value"] else "light")
             page.update()
 
         mode_badge = ft.Container(
@@ -1016,7 +1118,7 @@ async def build_ui(page: ft.Page):
         )
 
         try:
-            saved_name = await page.shared_preferences.get("user_name")
+            saved_name = await prefs.get("user_name")
             if saved_name:
                 greeting_name.value = f"{saved_name}!"
         except Exception:
@@ -1024,7 +1126,7 @@ async def build_ui(page: ft.Page):
 
         async def load_saved(key, default=""):
             try:
-                val = await page.shared_preferences.get(key)
+                val = await prefs.get(key)
                 return val if val else default
             except Exception:
                 return default
@@ -1037,19 +1139,19 @@ async def build_ui(page: ft.Page):
         last_rate_pct = await load_saved("last_rate_pct", "40")
 
         async def on_org_change(e):
-            await page.shared_preferences.set("last_org", org_input.value)
+            await prefs.set("last_org", org_input.value)
 
         async def on_salary_change(e):
-            await page.shared_preferences.set("last_salary", salary_input.value)
+            await prefs.set("last_salary", salary_input.value)
 
         async def on_increment_label_change(e):
-            await page.shared_preferences.set("last_increment_label", increment_label_input.value)
+            await prefs.set("last_increment_label", increment_label_input.value)
 
         async def on_increment_change(e):
-            await page.shared_preferences.set("last_increment_pct", increment_input.value)
+            await prefs.set("last_increment_pct", increment_input.value)
 
         async def on_rate_change(e):
-            await page.shared_preferences.set("last_rate_pct", rate_input.value)
+            await prefs.set("last_rate_pct", rate_input.value)
 
         org_input = ft.TextField(
             value=last_org, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
@@ -1160,19 +1262,19 @@ async def build_ui(page: ft.Page):
         sm_last_rent = await load_saved("sm_rent", "")
 
         async def sm_on_basic_change(e):
-            await page.shared_preferences.set("sm_basic", sm_basic_input.value)
+            await prefs.set("sm_basic", sm_basic_input.value)
 
         async def sm_on_housing_change(e):
-            await page.shared_preferences.set("sm_housing", sm_housing_input.value)
+            await prefs.set("sm_housing", sm_housing_input.value)
 
         async def sm_on_transport_change(e):
-            await page.shared_preferences.set("sm_transport", sm_transport_input.value)
+            await prefs.set("sm_transport", sm_transport_input.value)
 
         async def sm_on_other_change(e):
-            await page.shared_preferences.set("sm_other", sm_other_input.value)
+            await prefs.set("sm_other", sm_other_input.value)
 
         async def sm_on_rent_change(e):
-            await page.shared_preferences.set("sm_rent", sm_rent_input.value)
+            await prefs.set("sm_rent", sm_rent_input.value)
 
         sm_basic_input = ft.TextField(value=sm_last_basic, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         sm_basic_input.on_change = with_length_warning(sm_basic_input, 15, sm_on_basic_change)
@@ -1250,13 +1352,13 @@ async def build_ui(page: ft.Page):
             entry = dict(last_sm_result)
             entry["date"] = datetime.datetime.now().strftime("%d %b %Y, %I:%M %p")
             try:
-                raw = await page.shared_preferences.get("salary_history")
+                raw = await prefs.get("salary_history")
                 history = json.loads(raw) if raw else []
             except Exception:
                 history = []
             history.insert(0, entry)
             history = history[:20]
-            await page.shared_preferences.set("salary_history", json.dumps(history))
+            await prefs.set("salary_history", json.dumps(history))
             sm_status_text.value = "Saved to history."
             page.update()
 
@@ -1287,7 +1389,7 @@ async def build_ui(page: ft.Page):
 
         async def sm_show_history(e):
             try:
-                raw = await page.shared_preferences.get("salary_history")
+                raw = await prefs.get("salary_history")
                 history = json.loads(raw) if raw else []
             except Exception:
                 history = []
@@ -1314,7 +1416,7 @@ async def build_ui(page: ft.Page):
                     )
 
             async def clear_history(e):
-                await page.shared_preferences.set("salary_history", json.dumps([]))
+                await prefs.set("salary_history", json.dumps([]))
                 page.pop_dialog()
 
             history_dialog = ft.AlertDialog(scrollable=True, 
@@ -1455,13 +1557,13 @@ async def build_ui(page: ft.Page):
 
         async def load_category_changes():
             try:
-                raw = await page.shared_preferences.get("category_changes")
+                raw = await prefs.get("category_changes")
                 return json.loads(raw) if raw else {"added": {}, "removed": []}
             except Exception:
                 return {"added": {}, "removed": []}
 
         async def save_category_changes(changes):
-            await page.shared_preferences.set("category_changes", json.dumps(changes))
+            await prefs.set("category_changes", json.dumps(changes))
 
         async def apply_saved_category_changes():
             changes = await load_category_changes()
@@ -1493,17 +1595,17 @@ async def build_ui(page: ft.Page):
 
         async def load_active_profile():
             try:
-                raw = await page.shared_preferences.get("active_profile")
+                raw = await prefs.get("active_profile")
                 return int(raw) if raw else 1
             except Exception:
                 return 1
 
         async def save_active_profile(profile_num):
-            await page.shared_preferences.set("active_profile", str(profile_num))
+            await prefs.set("active_profile", str(profile_num))
 
         async def load_profile_names():
             try:
-                raw = await page.shared_preferences.get("profile_names")
+                raw = await prefs.get("profile_names")
                 names = json.loads(raw) if raw else {}
             except Exception:
                 names = {}
@@ -1513,20 +1615,20 @@ async def build_ui(page: ft.Page):
             return names
 
         async def save_profile_names(names):
-            await page.shared_preferences.set("profile_names", json.dumps(names))
+            await prefs.set("profile_names", json.dumps(names))
 
         def profile_key(base_key):
             return f"{base_key}_{active_profile_state['value']}"
 
         async def load_transactions():
             try:
-                raw = await page.shared_preferences.get(profile_key("money_transactions"))
+                raw = await prefs.get(profile_key("money_transactions"))
                 return json.loads(raw) if raw else []
             except Exception:
                 return []
 
         async def save_transactions(transactions):
-            await page.shared_preferences.set(profile_key("money_transactions"), json.dumps(transactions))
+            await prefs.set(profile_key("money_transactions"), json.dumps(transactions))
 
         # -------------------- AUTOMATED CAPTURE (banking SMS/app notifications, personal build only) --------------------
         NOTIF_DATA_DIR = f"/storage/emulated/0/Android/data/{NOTIF_PACKAGE_NAME}/files"
@@ -1585,14 +1687,14 @@ async def build_ui(page: ft.Page):
 
         async def load_alert_rules():
             try:
-                raw = await page.shared_preferences.get(ALERT_RULES_KEY)
+                raw = await prefs.get(ALERT_RULES_KEY)
                 rules = json.loads(raw) if raw else []
                 return [r for r in rules if r.get("keyword") and r.get("category")]
             except Exception:
                 return []
 
         async def save_alert_rules(rules):
-            await page.shared_preferences.set(ALERT_RULES_KEY, json.dumps(rules))
+            await prefs.set(ALERT_RULES_KEY, json.dumps(rules))
 
         def _rule_words(keyword):
             return [w for w in re.split(r"[\s|]+", (keyword or "").upper()) if w]
@@ -2098,24 +2200,24 @@ async def build_ui(page: ft.Page):
         # -------------------- CATEGORY BUDGETS (per profile; category list itself is shared) --------------------
         async def load_budgets():
             try:
-                raw = await page.shared_preferences.get(profile_key("category_budgets"))
+                raw = await prefs.get(profile_key("category_budgets"))
                 return json.loads(raw) if raw else {}
             except Exception:
                 return {}
 
         async def save_budgets(budgets):
-            await page.shared_preferences.set(profile_key("category_budgets"), json.dumps(budgets))
+            await prefs.set(profile_key("category_budgets"), json.dumps(budgets))
 
         # -------------------- QUICK ADD SHORTCUTS (per profile) --------------------
         async def load_quick_add():
             try:
-                raw = await page.shared_preferences.get(profile_key("quick_add_shortcuts"))
+                raw = await prefs.get(profile_key("quick_add_shortcuts"))
                 return json.loads(raw) if raw else []
             except Exception:
                 return []
 
         async def save_quick_add(shortcuts):
-            await page.shared_preferences.set(profile_key("quick_add_shortcuts"), json.dumps(shortcuts))
+            await prefs.set(profile_key("quick_add_shortcuts"), json.dumps(shortcuts))
 
         def open_budget_dialog():
             budget_category_picker, budget_category_state = build_category_picker("Food")
@@ -2193,12 +2295,12 @@ async def build_ui(page: ft.Page):
                     return
                 undo_state["handled"] = True
                 try:
-                    raw = await page.shared_preferences.get(deleted_from_key)
+                    raw = await prefs.get(deleted_from_key)
                     full = json.loads(raw) if raw else []
                 except Exception:
                     full = []
                 full.insert(0, deleted_entry)
-                await page.shared_preferences.set(deleted_from_key, json.dumps(full))
+                await prefs.set(deleted_from_key, json.dumps(full))
                 await refresh_money_ui()
 
             try:
@@ -2325,24 +2427,24 @@ async def build_ui(page: ft.Page):
         # -------------------- BACKUP & RESTORE (acts on the currently active profile) --------------------
         async def backup_data(e):
             try:
-                saved_username = await page.shared_preferences.get("user_name")
+                saved_username = await prefs.get("user_name")
             except Exception:
                 saved_username = ""
 
             profiles_data = {}
             for i in range(1, PROFILE_COUNT + 1):
                 try:
-                    raw_txn = await page.shared_preferences.get(f"money_transactions_{i}")
+                    raw_txn = await prefs.get(f"money_transactions_{i}")
                     txns = json.loads(raw_txn) if raw_txn else []
                 except Exception:
                     txns = []
                 try:
-                    raw_budget = await page.shared_preferences.get(f"category_budgets_{i}")
+                    raw_budget = await prefs.get(f"category_budgets_{i}")
                     budgets = json.loads(raw_budget) if raw_budget else {}
                 except Exception:
                     budgets = {}
                 try:
-                    raw_qa = await page.shared_preferences.get(f"quick_add_shortcuts_{i}")
+                    raw_qa = await prefs.get(f"quick_add_shortcuts_{i}")
                     quick = json.loads(raw_qa) if raw_qa else []
                 except Exception:
                     quick = []
@@ -2353,7 +2455,7 @@ async def build_ui(page: ft.Page):
             extras = {}
             for key in BACKUP_EXTRA_KEYS:
                 try:
-                    val = await page.shared_preferences.get(key)
+                    val = await prefs.get(key)
                     if val:
                         extras[key] = val
                 except Exception:
@@ -2453,10 +2555,10 @@ async def build_ui(page: ft.Page):
                 # New-format backup: restore all 3 profiles, each into its own correct slot
                 for i in range(1, PROFILE_COUNT + 1):
                     profile_data = backup_obj["profiles"].get(str(i), {"transactions": [], "budgets": {}})
-                    await page.shared_preferences.set(f"money_transactions_{i}", json.dumps(profile_data.get("transactions", [])))
-                    await page.shared_preferences.set(f"category_budgets_{i}", json.dumps(profile_data.get("budgets", {})))
+                    await prefs.set(f"money_transactions_{i}", json.dumps(profile_data.get("transactions", [])))
+                    await prefs.set(f"category_budgets_{i}", json.dumps(profile_data.get("budgets", {})))
                     if "quick_add" in profile_data:
-                        await page.shared_preferences.set(f"quick_add_shortcuts_{i}", json.dumps(profile_data.get("quick_add", [])))
+                        await prefs.set(f"quick_add_shortcuts_{i}", json.dumps(profile_data.get("quick_add", [])))
                 restored_names = backup_obj.get("profile_names", {})
                 if restored_names:
                     profile_names_state.clear()
@@ -2472,7 +2574,7 @@ async def build_ui(page: ft.Page):
             await merge_backup_extras(backup_obj.get("extras", {}) or {})
 
             if backup_obj.get("user_name"):
-                await page.shared_preferences.set("user_name", backup_obj["user_name"])
+                await prefs.set("user_name", backup_obj["user_name"])
 
             page.show_dialog(ft.SnackBar(ft.Text(restore_msg, color="white"), bgcolor="#2E8B57", duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
             await refresh_money_ui()
@@ -2487,7 +2589,7 @@ async def build_ui(page: ft.Page):
             """Adds the backup's extras to what's on the phone without throwing anything away."""
             async def get_json(key, default):
                 try:
-                    raw = await page.shared_preferences.get(key)
+                    raw = await prefs.get(key)
                     return json.loads(raw) if raw else default
                 except Exception:
                     return default
@@ -2504,7 +2606,7 @@ async def build_ui(page: ft.Page):
                 have = {g["id"] for g in cur}
                 cur.extend(g for g in b_groups if g["id"] not in have)
                 await save_ajo_groups(cur)
-                if not await page.shared_preferences.get("active_ajo_group_id") and cur:
+                if not await prefs.get("active_ajo_group_id") and cur:
                     await save_active_ajo_id(cur[0]["id"])
 
             # Custom categories
@@ -2527,7 +2629,7 @@ async def build_ui(page: ft.Page):
 
             # Saved salary calculations: only fill in if this phone has none.
             if "salary_history" in extras and not await get_json("salary_history", []):
-                await page.shared_preferences.set("salary_history", extras["salary_history"])
+                await prefs.set("salary_history", extras["salary_history"])
 
         def show_backup_help(e):
             dlg = ft.AlertDialog(scrollable=True, 
@@ -3764,7 +3866,7 @@ async def build_ui(page: ft.Page):
             async def toggle_haptic(on):
                 haptic["on"] = bool(on)
                 try:
-                    await page.shared_preferences.set("vibrate_on_tap", "on" if on else "off")
+                    await prefs.set("vibrate_on_tap", "on" if on else "off")
                 except Exception:
                     pass
                 if on:
@@ -3871,6 +3973,9 @@ async def build_ui(page: ft.Page):
             bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         )
 
+        # Don't read captured bank alerts while the app is opening; that runs a few
+        # seconds after the first screen is up (see "after_first_screen" below).
+        last_auto_ingest["t"] = time.monotonic()
         await refresh_money_ui()
         await refresh_quick_add_row()
 
@@ -3899,7 +4004,7 @@ async def build_ui(page: ft.Page):
 
         async def load_ajo_groups():
             try:
-                raw = await page.shared_preferences.get("ajo_groups")
+                raw = await prefs.get("ajo_groups")
                 groups = json.loads(raw) if raw else []
                 # Skip anything that isn't a real group, so one bad entry can never stop the app opening.
                 return [g for g in groups if is_valid_ajo_group(g)] if isinstance(groups, list) else []
@@ -3907,16 +4012,16 @@ async def build_ui(page: ft.Page):
                 return []
 
         async def save_ajo_groups(groups):
-            await page.shared_preferences.set("ajo_groups", json.dumps(groups))
+            await prefs.set("ajo_groups", json.dumps(groups))
 
         async def load_active_ajo_id():
             try:
-                return await page.shared_preferences.get("active_ajo_group_id")
+                return await prefs.get("active_ajo_group_id")
             except Exception:
                 return None
 
         async def save_active_ajo_id(gid):
-            await page.shared_preferences.set("active_ajo_group_id", gid or "")
+            await prefs.set("active_ajo_group_id", gid or "")
 
         def new_ajo_id():
             return str(int(datetime.datetime.now().timestamp() * 1000))
@@ -5779,7 +5884,7 @@ async def build_ui(page: ft.Page):
         tab_contents = [housing_tab_content, salary_tab_content, money_tab_content, ajo_tab_content]
         # Reopen on the page you were on last time (e.g. Ajo Groups).
         try:
-            start_tab = int(await page.shared_preferences.get("last_tab") or 0)
+            start_tab = int(await prefs.get("last_tab") or 0)
         except Exception:
             start_tab = 0
         if not 0 <= start_tab < len(tab_contents):
@@ -5821,7 +5926,7 @@ async def build_ui(page: ft.Page):
                 tab_content_area.scale = 1
                 _refresh(current_tab_title, tab_content_area)
                 try:
-                    await page.shared_preferences.set("last_tab", str(idx))
+                    await prefs.set("last_tab", str(idx))
                 except Exception:
                     pass
             return handler
@@ -5984,7 +6089,7 @@ async def build_ui(page: ft.Page):
         async def set_motion_effects(on):
             motion["on"] = bool(on)
             try:
-                await page.shared_preferences.set("motion_effects", "on" if on else "off")
+                await prefs.set("motion_effects", "on" if on else "off")
             except Exception:
                 pass
             if on:
@@ -6022,12 +6127,33 @@ async def build_ui(page: ft.Page):
         )
 
         page.controls.clear()
+        if not motion["on"]:
+            view_container.opacity = 1
+            view_container.animate_opacity = None
         page.add(view_container)
-        load_banner_ad()
         page.update()
-        await asyncio.sleep(0.03)
-        view_container.opacity = 1
-        page.update()
+        if motion["on"]:
+            await asyncio.sleep(0.03)
+            view_container.opacity = 1
+            _refresh(view_container)
+
+        async def after_first_screen():
+            # Heavy extras wait until the app is already usable.
+            await asyncio.sleep(2.5)
+            if build_gen["n"] != my_gen:
+                return
+            if os.path.exists(NOTIF_INBOX_FILE) or os.path.exists(NOTIF_INBOX_FILE + ".processing"):
+                last_auto_ingest["t"] = 0.0
+                try:
+                    await asyncio.wait_for(refresh_money_ui(), timeout=15)
+                    page.update()
+                except Exception:
+                    pass
+            await asyncio.sleep(1.5)
+            if build_gen["n"] == my_gen:
+                load_banner_ad()
+
+        asyncio.create_task(after_first_screen())
         resume_state = {"task": None}
 
         async def _catch_up_after_resume():
@@ -6073,8 +6199,25 @@ async def build_ui(page: ft.Page):
     # ==================================================================
     # STARTUP FLOW
     # ==================================================================
+    # Show the logo straight away while saved data loads, instead of a blank screen.
+    page.bgcolor = "#4B0082"
+    page.controls.clear()
+    page.add(ft.Container(
+        content=ft.Column(
+            [ft.Image(src="logo.png", width=110, height=110, fit=ft.BoxFit.CONTAIN),
+             ft.Text("Naira Finance Hub", size=20, weight=ft.FontWeight.BOLD, color="white"),
+             ft.ProgressRing(width=22, height=22, stroke_width=3, color="#FFD700")],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=14,
+        ),
+        expand=True, alignment=ft.Alignment(0, 0),
+    ))
+    page.update()
+    await prefs.preload()
+
     try:
-        terms_already_accepted = await page.shared_preferences.get("terms_accepted")
+        terms_already_accepted = await prefs.get("terms_accepted")
     except Exception:
         terms_already_accepted = False
 
