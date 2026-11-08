@@ -128,6 +128,13 @@ _install_fast_patch()
 _TAP_HOOK = {"fn": None}
 _TAP_EVENTS = {"click", "tap", "long_press"}
 
+# Motion sensor flood guard. Some phones (e.g. Xiaomi/Redmi) ignore the requested sensor
+# speed and send 100+ tilt readings a second. Flet redraws the WHOLE page after every event,
+# so the readings piled up and a tap on Menu could wait a minute behind them. Readings that
+# arrive too soon after the last one (or while Motion effects is off) are now thrown away
+# before Flet touches them.
+_SENSOR_GATE = {"on": False, "last": 0.0, "min_gap": 0.15}
+
 
 def _install_tap_hook():
     try:
@@ -139,7 +146,14 @@ def _install_tap_hook():
     original_dispatch = Session.dispatch_event
 
     async def dispatch_event(self, control_id, event_name, event_data, *args, **kwargs):
-        if event_name in _TAP_EVENTS:
+        if event_name == "reading":
+            if not _SENSOR_GATE["on"]:
+                return
+            now = time.monotonic()
+            if now - _SENSOR_GATE["last"] < _SENSOR_GATE["min_gap"]:
+                return
+            _SENSOR_GATE["last"] = now
+        elif event_name in _TAP_EVENTS:
             fn = _TAP_HOOK["fn"]
             if fn is not None:
                 try:
@@ -825,6 +839,7 @@ async def build_ui(page: ft.Page):
         my_gen = build_gen["n"]
         try:
             page.services.clear()
+            _SENSOR_GATE["on"] = False
         except Exception:
             pass
         dice_tick_sound = fta_audio.Audio(src="dice_tick.wav", autoplay=False, volume=1)
@@ -6026,6 +6041,12 @@ async def build_ui(page: ft.Page):
 
         def handle_tilt_reading(e: ft.AccelerometerReadingEvent):
             try:
+                # Never let a tilt reading trigger Flet's automatic whole-page redraw;
+                # we redraw just the background and logo ourselves below.
+                ft.context.mark_update_called()
+            except Exception:
+                pass
+            try:
                 if not app_active["value"] or not motion["on"]:
                     return
                 now = asyncio.get_event_loop().time()
@@ -6061,6 +6082,7 @@ async def build_ui(page: ft.Page):
         tilt_sensor = {"control": None}
 
         def start_tilt_sensor():
+            _SENSOR_GATE["on"] = True
             if tilt_sensor["control"] is None:
                 tilt_sensor["control"] = ft.Accelerometer(
                     on_reading=handle_tilt_reading,
@@ -6071,6 +6093,7 @@ async def build_ui(page: ft.Page):
                 page.services.append(tilt_sensor["control"])
 
         def stop_tilt_sensor():
+            _SENSOR_GATE["on"] = False
             sensor = tilt_sensor["control"]
             tilt_sensor["control"] = None
             if sensor is not None:
