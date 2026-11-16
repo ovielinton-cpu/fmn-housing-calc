@@ -535,6 +535,101 @@ def ajo_round_status(group, today=None):
             "due": due, "days_left": (due - today).days if due else None, "month_label": month_label}
 
 
+_CARD_STYLES = {  # name: (font size, bold, colour)
+    "brand": (40, True, "#FFFFFF"), "sub": (30, True, "#FFD54F"), "title": (58, True, "#FFFFFF"),
+    "gold": (34, True, "#FFD54F"), "big": (76, True, "#FFD54F"), "soft": (28, False, "#DDDDDD"),
+    "good": (36, True, "#5DE88C"), "bad": (36, True, "#FF8A80"), "warn": (36, True, "#FFB74D"),
+    "text": (38, False, "#FFFFFF"), "gap": (18, False, "#FFFFFF"),
+}
+
+
+def render_card_png(lines):
+    """Draws a share card as a PNG without using the screen (backup for phones where the
+    on-screen capture fails). `lines` is a list of (text, style) or (left, right, style)."""
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+    regular, bold = _asset_path("DejaVuSans.ttf"), _asset_path("DejaVuSans-Bold.ttf")
+    if not (regular and bold):
+        raise RuntimeError("font files missing")
+    fonts = {}
+
+    def font(size, is_bold):
+        key = (size, is_bold)
+        if key not in fonts:
+            fonts[key] = ImageFont.truetype(bold if is_bold else regular, size)
+        return fonts[key]
+
+    width, pad = 900, 54
+    inner = width - 2 * pad
+    probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+
+    def wrap(text, f):
+        out, line = [], ""
+        for word in str(text).split():
+            trial = (line + " " + word).strip()
+            if probe.textlength(trial, font=f) <= inner or not line:
+                line = trial
+            else:
+                out.append(line)
+                line = word
+        return out + [line] if line else out
+
+    rows = []  # (y, kind, payload)
+    y = pad
+    for item in lines:
+        style = item[-1]
+        size, is_bold, colour = _CARD_STYLES.get(style, _CARD_STYLES["text"])
+        f = font(size, is_bold)
+        if style == "gap":
+            y += size
+        elif len(item) == 3:
+            rows.append((y, "pair", (str(item[0]), str(item[1]), f, colour)))
+            y += int(size * 1.45)
+        else:
+            for part in wrap(item[0], f):
+                rows.append((y, "text", (part, f, colour)))
+                y += int(size * 1.32)
+            y += int(size * 0.25)
+    height = y + pad
+    img = Image.new("RGB", (width, height), "#2A0845")
+    draw = ImageDraw.Draw(img)
+    top, bottom = (0x6A, 0x1B, 0xB0), (0x2A, 0x08, 0x45)
+    for row in range(height):
+        k = row / max(height - 1, 1)
+        draw.line([(0, row), (width, row)], fill=tuple(int(top[i] + (bottom[i] - top[i]) * k) for i in range(3)))
+    for y, kind, payload in rows:
+        if kind == "pair":
+            left, right, f, colour = payload
+            draw.text((pad, y), left, font=font(f.size, False), fill="#DDDDDD")
+            draw.text((width - pad - draw.textlength(right, font=f), y), right, font=f, fill=colour)
+        else:
+            text, f, colour = payload
+            draw.text((pad, y), text, font=f, fill=colour)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+_GROUP_META_KEYS = ("updated_at", "last_shared_at", "is_admin")
+
+
+def group_fingerprint(group):
+    """The group's content, ignoring the bookkeeping fields, to tell whether anything changed."""
+    try:
+        return json.dumps({k: v for k, v in group.items() if k not in _GROUP_META_KEYS}, sort_keys=True, default=str)
+    except Exception:
+        return ""
+
+
+def fmt_stamp(iso):
+    """'2026-11-16T16:40:05' -> '16 Nov, 4:40 PM'."""
+    try:
+        d = datetime.datetime.fromisoformat(str(iso))
+    except Exception:
+        return ""
+    return f"{d.day} {d.strftime('%b')}, {d.strftime('%I:%M %p').lstrip('0')}"
+
+
 def hash_secret(secret, salt):
     return hashlib.sha256(f"{salt}|{secret}".encode("utf-8")).hexdigest()
 
@@ -856,7 +951,7 @@ async def build_ui(page: ft.Page):
             "icon": ft.Icons.CHECK_CIRCLE_ROUNDED,
             "icon_color": "#8E24AA",
             "title": "Ajo Groups: Tracking & Sharing",
-            "text": "Each round shows Unpaid and Paid boxes — tap a name to move it between them as contributions come in. A separate 'Already Collected' list tracks everyone who's had their turn. The Admin can Edit Order (reposition or remove upcoming members) anytime, and export a full PDF progress report to share with the group.",
+            "text": "Each round shows Unpaid and Paid boxes — tap a name to move it between them as contributions come in. A separate 'Already Collected' list tracks everyone who's had their turn. The Admin can Edit Order (reposition or remove upcoming members) anytime, and export a full PDF progress report to share with the group. To keep members' apps up to date, the Admin taps 'Send update' (or Send Group File to Members) after ticking payments and sends the file on WhatsApp as a Document; members open it with Import Group from File and their copy updates.",
         },
         {
             "icon": ft.Icons.AUTO_AWESOME_ROUNDED,
@@ -4411,7 +4506,82 @@ async def build_ui(page: ft.Page):
                 return []
 
         async def save_ajo_groups(groups):
+            # Stamp the time on any group YOU run (admin) whose content changed, so members can
+            # tell which shared file is the newest.
+            try:
+                old_raw = await prefs.get("ajo_groups")
+                old = {g.get("id"): g for g in (json.loads(old_raw) if old_raw else []) if isinstance(g, dict)}
+            except Exception:
+                old = {}
+            now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+            for g in groups:
+                if not isinstance(g, dict) or not g.get("is_admin", True):
+                    continue
+                prev = old.get(g.get("id"))
+                if prev is None or group_fingerprint(prev) != group_fingerprint(g) or not g.get("updated_at"):
+                    g["updated_at"] = now_iso
             await prefs.set("ajo_groups", json.dumps(groups))
+
+        async def send_group_file(group_id):
+            """Admin: save the group as a file to send to members (WhatsApp → Document)."""
+            groups_now = await load_ajo_groups()
+            group = next((g for g in groups_now if g.get("id") == group_id), None)
+            if not group:
+                return
+            if not group.get("updated_at"):
+                group["updated_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+            shared_copy = dict(group)
+            shared_copy["is_admin"] = False
+            shared_copy.pop("last_shared_at", None)
+            export_bytes, ext = make_branded_file("ajo_card.png", json.dumps(shared_copy).encode("utf-8"))
+            file_path = await picker_save_file(
+                dialog_title="Send Group File",
+                file_name=f"NairaFinanceHub_Ajo_{safe_filename(group['name'])}_{datetime.datetime.now().strftime('%d%b_%H%M')}.{ext}",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=[ext],
+                src_bytes=export_bytes,
+            )
+            file_path = file_path or (page.web and file_path is None)  # web: the browser downloads it and returns nothing
+            if file_path:
+                group["last_shared_at"] = group["updated_at"]
+                await save_ajo_groups(groups_now)
+                await refresh_ajo_ui()
+            page.show_dialog(ft.SnackBar(
+                ft.Text("Group file saved! On WhatsApp send it as a Document (📎 → Document), not as a photo. "
+                        "Members open it with Import Group from File and their copy updates." if file_path else "Cancelled.", color="white"),
+                bgcolor="#8E24AA", duration=ft.Duration(seconds=6), behavior=ft.SnackBarBehavior.FLOATING,
+                margin=ft.Margin.only(bottom=300, left=10, right=10)))
+            page.update()
+
+        def group_sync_row(group, is_admin):
+            """Admin: reminds you to send members the latest file. Member: shows how fresh your copy is."""
+            if not is_admin:
+                when = fmt_stamp(group.get("updated_at"))
+                return ft.Text(
+                    f"Admin's update from {when}. Ask the admin for a new file to see later payments." if when
+                    else "Ask the admin for a new group file to see the latest payments.",
+                    color="#DDDDDD", size=11, italic=True, text_align=ft.TextAlign.CENTER)
+            shared = group.get("last_shared_at")
+            if shared and shared >= (group.get("updated_at") or ""):
+                return ft.Text(f"✓ Members have your latest changes (sent {fmt_stamp(shared)})",
+                               color="#5DE88C", size=11, text_align=ft.TextAlign.CENTER)
+
+            async def send(e):
+                await send_group_file(group["id"])
+
+            label = ("You have changes your members haven't received." if shared
+                     else "Members with the app can follow this group on their phone.")
+            return ft.Container(
+                content=ft.Row(
+                    [ft.Icon(ft.Icons.SYNC_ROUNDED, color="#FFB74D", size=18),
+                     ft.Text(label, color="white", size=12, expand=True),
+                     ft.TextButton(content=ft.Text("Send update" if shared else "Send file", color="#FFD54F", weight=ft.FontWeight.BOLD, size=12),
+                                   on_click=send)],
+                    spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.Padding(left=10, right=4, top=2, bottom=2), border_radius=10,
+                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.WHITE),
+            )
 
         async def load_active_ajo_id():
             try:
@@ -5386,6 +5556,7 @@ async def build_ui(page: ft.Page):
                             ft.Container(
                                 content=ft.Text("👁 View Only — Only the Admin can edit this group", color="#FFD700", size=11, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
                             ) if not is_admin else ft.Container(height=0),
+                            group_sync_row(active_group, is_admin) if not is_admin else ft.Container(height=0),
                             contribution_field,
                             due_date_btn,
                             ft.Divider(height=1, color="#4B0082"),
@@ -5720,6 +5891,7 @@ async def build_ui(page: ft.Page):
                 content=ft.Column(
                     [
                         ft.Text("👁 View Only — Only the Admin can edit this group", color="#FFD700", size=11, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER) if not is_admin else ft.Container(height=0),
+                        group_sync_row(active_group, is_admin),
                         ft.Text(f"Round {current_round} of {len(order)}", color="white", weight=ft.FontWeight.BOLD, size=14, text_align=ft.TextAlign.CENTER),
                         ft.Text(round_month_display, color="#FFD700", size=12, text_align=ft.TextAlign.CENTER) if round_month_display else ft.Container(height=0),
                         ft.Text(countdown_text, color=countdown_color, size=14, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER) if countdown_text else ft.Container(height=0),
@@ -5843,13 +6015,27 @@ async def build_ui(page: ft.Page):
                     page.show_dialog(ft.SnackBar(ft.Text("You are the Admin of this group — import blocked to protect your copy.", color="white"), bgcolor="#C62828", duration=ft.Duration(seconds=4), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
                     page.update()
                     return
+                new_t = str(imported_group.get("updated_at") or "")
                 if existing_idx is not None:
+                    have_t = str(fresh_groups[existing_idx].get("updated_at") or "")
+                    if have_t and new_t and new_t < have_t:
+                        page.show_dialog(ft.SnackBar(ft.Text(
+                            f"This file is older than the copy you already have (yours: {fmt_stamp(have_t)}, file: {fmt_stamp(new_t)}). "
+                            "Nothing was changed. Ask the admin for the newest file.", color="white"),
+                            bgcolor="#C62828", duration=ft.Duration(seconds=7), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
+                        page.update()
+                        return
                     fresh_groups[existing_idx] = imported_group
+                    if have_t and new_t == have_t:
+                        msg = f"Already up to date: {imported_group.get('name', 'Ajo Group')} ({fmt_stamp(new_t)})."
+                    else:
+                        msg = f"Updated: {imported_group.get('name', 'Ajo Group')}" + (f" (admin's changes from {fmt_stamp(new_t)})" if new_t else "")
                 else:
                     fresh_groups.append(imported_group)
+                    msg = f"Imported: {imported_group.get('name', 'Ajo Group')}"
                 await save_ajo_groups(fresh_groups)
                 await save_active_ajo_id(imported_group["id"])
-                page.show_dialog(ft.SnackBar(ft.Text(f"Imported: {imported_group.get('name', 'Ajo Group')}", color="white"), bgcolor="#2E8B57", duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
+                page.show_dialog(ft.SnackBar(ft.Text(msg, color="white"), bgcolor="#2E8B57", duration=ft.Duration(seconds=5), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
                 await refresh_ajo_ui()
                 page.update()
             except Exception:
@@ -5932,7 +6118,7 @@ async def build_ui(page: ft.Page):
                         modal=True, bgcolor="#FFFFFF",
                         title=ft.Text("Delete group?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
                         content=ft.Text(f"“{gname}” and all its members, payments and history will be removed from this phone. "
-                                        "This can't be undone. (Tip: Share Group first to keep a copy.)", color=DARK_TEXT, size=13),
+                                        "This can't be undone. (Tip: use Send Group File to Members first to keep a copy.)", color=DARK_TEXT, size=13),
                         actions=[
                             ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
                             ft.ElevatedButton("Delete", on_click=_really_delete, style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
@@ -6141,21 +6327,7 @@ async def build_ui(page: ft.Page):
 
             async def export_ajo_group(e):
                 page.pop_dialog()
-                current_active_group = next((g for g in groups if g["id"] == active_id), None)
-                if not current_active_group:
-                    return
-                shared_copy = dict(current_active_group)
-                shared_copy["is_admin"] = False
-                export_bytes, ext = make_branded_file("ajo_card.png", json.dumps(shared_copy).encode("utf-8"))
-                file_path = await picker_save_file(
-                    dialog_title="Share Ajo Group",
-                    file_name=f"NairaFinanceHub_Ajo_{safe_filename(current_active_group['name'])}.{ext}",
-                    file_type=ft.FilePickerFileType.CUSTOM,
-                    allowed_extensions=[ext],
-                    src_bytes=export_bytes,
-                )
-                page.show_dialog(ft.SnackBar(ft.Text("Group file saved! On WhatsApp send it as a Document (📎 → Document), not as a photo." if file_path else "Export cancelled.", color="white"), bgcolor="#8E24AA", duration=ft.Duration(seconds=3), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
-                page.update()
+                await send_group_file(active_id)
 
             async def import_from_switcher(e):
                 page.pop_dialog()
@@ -6228,7 +6400,7 @@ async def build_ui(page: ft.Page):
                         on_click=view_past_cycles_dialog,
                     ),
                     ft.TextButton(
-                        content=ft.Row([ft.Icon(ft.Icons.SHARE_ROUNDED, color="#8E24AA", size=16), ft.Text("Share Current Group", color="#8E24AA", weight=ft.FontWeight.BOLD)], spacing=8),
+                        content=ft.Row([ft.Icon(ft.Icons.SHARE_ROUNDED, color="#8E24AA", size=16), ft.Text("Send Group File to Members", color="#8E24AA", weight=ft.FontWeight.BOLD)], spacing=8),
                         on_click=export_ajo_group,
                     ),
                 ] if groups else []) + ([
@@ -7016,7 +7188,7 @@ async def build_ui(page: ft.Page):
             return ft.Row([ft.Text(label, color=SOFT_TEXT, size=size), ft.Text(value, color=value_color, size=size, weight=ft.FontWeight.BOLD)],
                           alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
-        def open_share_card(dialog_title, card, file_stub, share_text="", copy_text=None):
+        def open_share_card(dialog_title, card, file_stub, share_text="", copy_text=None, plain_lines=None):
             """Shows the picture, then shares it (WhatsApp etc.) or saves it to the phone."""
             shot = ft.Screenshot(content=card)
             status = ft.Text("", size=12, color=DARK_TEXT, text_align=ft.TextAlign.CENTER)
@@ -7026,10 +7198,23 @@ async def build_ui(page: ft.Page):
                 if busy["value"]:
                     return None
                 busy["value"] = True
+                problem = ""
                 try:
-                    return await asyncio.wait_for(shot.capture(pixel_ratio=3), timeout=20)
-                except Exception:
-                    status.value = "Couldn't make the picture. Please try again."
+                    # 1) photograph the card on screen (sharp first, then the phone's own sharpness)
+                    for ratio in (3, None):
+                        try:
+                            data = await asyncio.wait_for(shot.capture(pixel_ratio=ratio), timeout=8)
+                            if data:
+                                return bytes(data)
+                        except Exception as ex:
+                            problem = f"{type(ex).__name__}: {ex}"[:120]
+                    # 2) some phones refuse that: draw the same card ourselves instead
+                    if plain_lines:
+                        try:
+                            return await asyncio.to_thread(render_card_png, plain_lines)
+                        except Exception as ex:
+                            problem = f"{type(ex).__name__}: {ex}"[:120]
+                    status.value = f"Couldn't make the picture. ({problem or 'no picture returned'})"
                     page.update()
                     return None
                 finally:
@@ -7053,7 +7238,7 @@ async def build_ui(page: ft.Page):
                 external_busy["n"] += 1
                 try:
                     result = await share_service.share_files(
-                        [ft.ShareFile.from_bytes(bytes(data), mime_type="image/png", name=f"{file_stub}.png")],
+                        [ft.ShareFile.from_bytes(data, mime_type="image/png", name=f"{file_stub}.png")],
                         text=share_text or None,
                     )
                     unavailable = getattr(result, "status", None) == ft.ShareResultStatus.UNAVAILABLE
@@ -7137,9 +7322,32 @@ async def build_ui(page: ft.Page):
             children.append(names_block("Yet to pay", st["unpaid"], MONEY_RED, ft.Icons.RADIO_BUTTON_UNCHECKED_ROUNDED))
             children.append(ft.Text(f"As at {datetime.datetime.now().strftime('%d %b %Y, %I:%M %p').lstrip('0')} · from the Naira Finance Hub app",
                                     color=SOFT_TEXT, size=10))
+            plain = [
+                ("Naira Finance Hub", "brand"), ("Ajo update", "sub"), ("", "gap"),
+                (st["name"], "title"),
+                (f"Round {st['round']} of {st['rounds']}" + (f" · {st['month_label']}" if st["month_label"] else ""), "gold"),
+                ("", "gap"),
+                (f"{st['collector']} collects", "text"),
+                (fmt_money(st["full_pot"], 0), "big"),
+                (f"{fmt_money(st['contribution'], 0)} each · {fmt_money(st['pot'], 0)} in so far", "soft"),
+                ("", "gap"),
+            ]
+            if st["due"]:
+                d = st["days_left"]
+                plain.append((f"Due {st['due'].strftime('%d %b %Y').lstrip('0')} · {due_phrase(d)}",
+                              "bad" if d <= 0 else ("warn" if d <= 7 else "good")))
+                plain.append(("", "gap"))
+            plain.append((f"Paid ({len(st['paid'])})", "good"))
+            plain += [(f"✔ {n}", "text") for n in st["paid"]] or [("None", "soft")]
+            plain.append(("", "gap"))
+            plain.append((f"Yet to pay ({len(st['unpaid'])})", "bad"))
+            plain += [(f"○ {n}", "text") for n in st["unpaid"]] or [("None", "soft")]
+            plain.append(("", "gap"))
+            plain.append((f"As at {datetime.datetime.now().strftime('%d %b %Y, %I:%M %p').lstrip('0')} · from the Naira Finance Hub app", "soft"))
             open_share_card(
                 "Share This Round", share_card_shell(children), f"Ajo_{safe_filename(st['name'])}_Round_{st['round']}",
                 share_text=f"{st['name']} · Round {st['round']} of {st['rounds']}: {len(st['paid'])} paid, {len(st['unpaid'])} yet to pay.",
+                plain_lines=plain,
             )
 
         def share_payslip(result, copy_text):
@@ -7163,8 +7371,26 @@ async def build_ui(page: ft.Page):
                 ft.Text("Estimate for guidance only, using the Nigeria Tax Act 2025 bands. Not an official payslip. "
                         "Made with the Naira Finance Hub app.", color=SOFT_TEXT, size=10),
             ]
+            plain = [
+                ("Naira Finance Hub", "brand"), ("Payslip estimate", "sub"), ("", "gap"),
+                ("Basic salary", fmt_money(result["basic"]), "text"),
+                ("Housing allowance", fmt_money(result["housing"]), "text"),
+                ("Transport allowance", fmt_money(result["transport"]), "text"),
+                ("Other allowances", fmt_money(result["other"]), "text"),
+                ("", "gap"),
+                ("Gross pay (monthly)", fmt_money(result["gross_monthly"]), "good"),
+                ("Pension (8%)", f"-{fmt_money(result['pension_monthly'])}", "bad"),
+                ("NHF (2.5%)", f"-{fmt_money(result['nhf_monthly'])}", "bad"),
+                ("PAYE tax", f"-{fmt_money(result['paye_monthly'])}", "bad"),
+                ("", "gap"),
+                ("Net pay (monthly)", "soft"),
+                (fmt_money(result["net_monthly"]), "big"),
+                ("", "gap"),
+                ("Estimate for guidance only, using the Nigeria Tax Act 2025 bands. Not an official payslip. "
+                 "Made with the Naira Finance Hub app.", "soft"),
+            ]
             open_share_card("Share Payslip", share_card_shell(children), "Payslip_Estimate",
-                            share_text="My payslip estimate from Naira Finance Hub", copy_text=copy_text)
+                            share_text="My payslip estimate from Naira Finance Hub", copy_text=copy_text, plain_lines=plain)
 
         # -------------------- APP LOCK (PIN) --------------------
         # Keeps other people who pick up the phone out of the app. The PIN is never stored itself,
