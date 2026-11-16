@@ -1,5 +1,7 @@
 import flet as ft
+import flet.canvas as cv
 import asyncio
+import math
 import flet_ads as fta
 import flet_audio as fta_audio
 import json
@@ -401,7 +403,163 @@ def safe_filename(name):
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(name or "")).strip("_") or "File"
 
 
-BACKUP_EXTRA_KEYS = ("ajo_groups", "active_ajo_group_id", "category_changes", "salary_history", "alert_category_rules")
+def NFTextField(*args, **kwargs):
+    """A text box without the small "6/40" counter under it (the app already warns at the limit)."""
+    if kwargs.get("max_length") and "counter" not in kwargs:
+        kwargs["counter"] = ""
+    return ft.TextField(*args, **kwargs)
+
+
+def fmt_money(value, decimals=2):
+    """₦1,250.00 — and -₦1,250.00 (not ₦-1,250.00) when the amount is negative."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = 0.0
+    return f"{'-' if value < 0 else ''}₦{abs(value):,.{decimals}f}"
+
+
+def fmt_compact(value):
+    """Short money for small spaces: ₦850, ₦12.5K, ₦1.2M."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = 0.0
+    sign = "-" if value < 0 else ""
+    v = abs(value)
+    if v >= 1_000_000:
+        return f"{sign}₦{v / 1_000_000:.1f}M".replace(".0M", "M")
+    if v >= 10_000:
+        return f"{sign}₦{v / 1_000:.1f}K".replace(".0K", "K")
+    return f"{sign}₦{v:,.0f}"
+
+
+def month_stats(transactions, year, month, up_to_day=31):
+    """Totals for one month (optionally only up to a day of that month)."""
+    income = expense = charges = 0.0
+    by_cat = {}
+    count = 0
+    for t in transactions or []:
+        try:
+            d = datetime.date.fromisoformat(t["date"])
+            if d.year != year or d.month != month or d.day > up_to_day:
+                continue
+            amount = float(t.get("amount", 0) or 0)
+        except Exception:
+            continue
+        count += 1
+        if t.get("type") == "income":
+            income += amount
+        else:
+            expense += amount
+            cat = t.get("category", "Other") or "Other"
+            by_cat[cat] = by_cat.get(cat, 0.0) + amount
+        try:
+            charges += float(t.get("charge", 0) or 0)
+        except (TypeError, ValueError):
+            pass
+    return {"income": income, "expense": expense, "charges": charges, "by_cat": by_cat, "count": count,
+            "spent": expense + charges, "net": income - expense - charges}
+
+
+def prev_month(year, month):
+    return (year, month - 1) if month > 1 else (year - 1, 12)
+
+
+def due_phrase(days_left):
+    if days_left is None:
+        return ""
+    if days_left > 1:
+        return f"{days_left} days left"
+    if days_left == 1:
+        return "1 day left"
+    if days_left == 0:
+        return "Due today"
+    return f"Overdue by {abs(days_left)} day{'s' if abs(days_left) != 1 else ''}"
+
+
+def recurring_due_dates(rule, today):
+    """The dates (oldest first) on which a monthly repeating entry should have been added but
+    hasn't been yet. `last_added` is the "YYYY-MM" of the last month already added.
+    Never looks back more than 12 months."""
+    try:
+        day = max(1, min(31, int(rule.get("day", 1))))
+        ly, lm = (int(x) for x in str(rule.get("last_added") or "").split("-")[:2])
+    except Exception:
+        return []
+    months = []
+    y, m = today.year, today.month
+    for _ in range(12):
+        if (y, m) <= (ly, lm):
+            break
+        months.append((y, m))
+        y, m = prev_month(y, m)
+    out = []
+    for y, m in reversed(months):
+        due = datetime.date(y, m, min(day, calendar.monthrange(y, m)[1]))
+        if due <= today:
+            out.append(due)
+    return out
+
+
+def ajo_round_status(group, today=None):
+    """Where an Ajo group's current round stands, or None if no round is running."""
+    today = today or datetime.date.today()
+    try:
+        order = list(group.get("order") or [])
+        cur = int(group.get("current_round", 1))
+        if not order or cur < 1 or cur > len(order):
+            return None
+        collector = order[cur - 1]
+        payments = (group.get("payments") or {}).get(str(cur), {}) or {}
+        contributors = [m for m in order if m != collector]
+        paid = [m for m in contributors if payments.get(m)]
+        unpaid = [m for m in contributors if not payments.get(m)]
+        contribution = float(group.get("contribution_amount") or 0)
+    except Exception:
+        return None
+    due = None
+    month_label = ""
+    months = group.get("round_months") or []
+    if cur - 1 < len(months):
+        try:
+            y, m = (int(x) for x in str(months[cur - 1]).split("-")[:2])
+            month_label = datetime.date(y, m, 1).strftime("%B %Y")
+            if group.get("due_day"):
+                due = datetime.date(y, m, min(int(group["due_day"]), calendar.monthrange(y, m)[1]))
+        except Exception:
+            due = None
+    return {"name": group.get("name", "Ajo Group"), "round": cur, "rounds": len(order), "collector": collector,
+            "paid": paid, "unpaid": unpaid, "contribution": contribution,
+            "pot": contribution * (1 + len(paid)), "full_pot": contribution * len(order),
+            "due": due, "days_left": (due - today).days if due else None, "month_label": month_label}
+
+
+def hash_secret(secret, salt):
+    return hashlib.sha256(f"{salt}|{secret}".encode("utf-8")).hexdigest()
+
+
+def ui_progress_bar(pct, color, height=10):
+    """A full-width progress bar (0-100%)."""
+    pct = max(0.0, min(100.0, float(pct or 0)))
+    filled = int(round(pct * 10))
+    parts = []
+    if filled > 0:
+        parts.append(ft.Container(expand=filled, height=height, bgcolor=color, border_radius=height / 2))
+    if filled < 1000:
+        parts.append(ft.Container(expand=1000 - filled, height=height))
+    return ft.Container(content=ft.Row(parts, spacing=0), height=height, border_radius=height / 2,
+                        bgcolor=ft.Colors.with_opacity(0.22, ft.Colors.WHITE))
+
+
+RING_COLORS = ("#FF6B6B", "#FFD54F", "#64B5F6", "#81C784", "#BA68C8", "#FFB74D")
+
+MONEY_GREEN = "#5DE88C"   # money in / positive balance (bright enough for the dark cards)
+MONEY_RED = "#FF8A80"     # money out / negative balance
+CAPTION_GOLD = "#FFD54F"  # field captions on the dark cards
+
+
+BACKUP_EXTRA_KEYS = ("ajo_groups", "active_ajo_group_id", "category_changes", "salary_history", "alert_category_rules", "savings_goals")
 
 PHOTO_STRIPPED_MSG = ("This picture has no data inside. It was probably sent as a photo, which removes the data. "
                       "Ask the sender to send it again on WhatsApp as a Document (📎 → Document).")
@@ -581,7 +739,7 @@ async def build_ui(page: ft.Page):
             page.pop_dialog()
             page.update()
 
-        name_field = ft.TextField(
+        name_field = NFTextField(
             label="Your Name",
             value=greeting_name.value.rstrip("!") if greeting_name.value != "Staff!" else "",
             autofocus=True,
@@ -641,6 +799,12 @@ async def build_ui(page: ft.Page):
 
     TUTORIAL_SLIDES = [
         {
+            "icon": ft.Icons.DASHBOARD_ROUNDED,
+            "icon_color": "#FFD54F",
+            "title": "Home",
+            "text": "Home shows your month at a glance: money in, money out and your balance, how much budget is left, your next Ajo due date, your savings goals and any reminders. Tap a card or one of the four big buttons to jump straight to that tool. The ☰ menu (top-left) also takes you anywhere.",
+        },
+        {
             "icon": ft.Icons.HOME_ROUNDED,
             "icon_color": "#FF8C00",
             "title": "Housing Upfront",
@@ -674,7 +838,7 @@ async def build_ui(page: ft.Page):
             "icon": ft.Icons.MENU_ROUNDED,
             "icon_color": "#1E88E5",
             "title": "Money Tracker: Export & Backup",
-            "text": "Tap the ☰ menu (top-left) for PDF export of any month or year, and Backup/Restore to save all 3 profiles to a file — useful when switching phones. Search your transactions anytime, and deleted entries can be undone within 5 seconds.",
+            "text": "Tap the green Options button on the Money Tracker page for PDF export of any month or year, and Backup/Restore to save all 3 profiles to a file — useful when switching phones. Search your transactions anytime, and deleted entries can be undone within 5 seconds.",
         },
         {
             "icon": ft.Icons.GROUPS_ROUNDED,
@@ -693,6 +857,12 @@ async def build_ui(page: ft.Page):
             "icon_color": "#8E24AA",
             "title": "Ajo Groups: Tracking & Sharing",
             "text": "Each round shows Unpaid and Paid boxes — tap a name to move it between them as contributions come in. A separate 'Already Collected' list tracks everyone who's had their turn. The Admin can Edit Order (reposition or remove upcoming members) anytime, and export a full PDF progress report to share with the group.",
+        },
+        {
+            "icon": ft.Icons.AUTO_AWESOME_ROUNDED,
+            "icon_color": "#FFD54F",
+            "title": "More Helpful Tools",
+            "text": "Savings Goals (on Home): set a target, add money as you save and watch the bar fill. Repeating Entries (Money Tracker → Options): rent, salary or subscriptions are added for you every month. Share as Picture: send an Ajo round or a payslip estimate to WhatsApp as a clean image. App Lock (☰ → Settings): protect the app with a 4-digit PIN.",
         },
     ]
 
@@ -817,10 +987,11 @@ async def build_ui(page: ft.Page):
     # ==================================================================
     # SHARED UI HELPER
     # ==================================================================
-    def field_with_caption(caption_text, field):
+    def field_with_caption(caption_text, field, on_white=False):
+        # Soft gold on the dark cards (the old red was hard to read); dark purple inside white pop-ups.
         return ft.Column(
             [
-                ft.Text(caption_text, color="#FF3B30", weight=ft.FontWeight.BOLD, size=12),
+                ft.Text(caption_text, color=PURPLE_TEXT if on_white else CAPTION_GOLD, weight=ft.FontWeight.BOLD, size=12),
                 field,
             ],
             spacing=2,
@@ -1000,6 +1171,24 @@ async def build_ui(page: ft.Page):
             except Exception:
                 pass
 
+        def build_light_background():
+            # The big "h" stays bright behind the header and fades into deep purple lower down,
+            # so it no longer cuts through the cards and text.
+            return ft.Stack(
+                controls=[
+                    ft.Image(src="background.png", fit=ft.BoxFit.COVER, left=0, top=0, right=0, bottom=0),
+                    ft.Container(
+                        left=0, top=0, right=0, bottom=0,
+                        gradient=ft.LinearGradient(
+                            begin=ft.Alignment(0, -1), end=ft.Alignment(0, 1),
+                            colors=[ft.Colors.with_opacity(0.0, "#2A0845"), ft.Colors.with_opacity(0.78, "#2A0845"),
+                                    ft.Colors.with_opacity(0.90, "#2A0845")],
+                            stops=[0.10, 0.34, 1.0],
+                        ),
+                    ),
+                ],
+            )
+
         async def toggle_dark_mode(e):
             dark_mode_state["value"] = not dark_mode_state["value"]
             if dark_mode_state["value"]:
@@ -1012,7 +1201,7 @@ async def build_ui(page: ft.Page):
                 mode_badge_text.value = "Dark Mode"
             else:
                 galaxy_stars_active["value"] = False
-                background_layer.content = ft.Image(src="background.png", fit=ft.BoxFit.COVER)
+                background_layer.content = build_light_background()
                 background_layer.bgcolor = None
                 mode_badge_icon.icon = ft.Icons.LIGHT_MODE_ROUNDED
                 mode_badge_text.value = "Light Mode"
@@ -1049,7 +1238,8 @@ async def build_ui(page: ft.Page):
             padding=ft.Padding(left=12, right=12, top=8, bottom=8),
         )
 
-        logo_image = ft.Image(src="logo.png", width=90, height=90, fit=ft.BoxFit.CONTAIN)
+        # The purple "h" (same picture as the app icon), cropped to a rounded square.
+        logo_image = ft.Image(src="background.png", width=90, height=90, fit=ft.BoxFit.COVER, border_radius=20)
         logo_container = ft.Container(
             content=logo_image,
             scale=1.0,
@@ -1061,8 +1251,8 @@ async def build_ui(page: ft.Page):
         logo_backing_square = ft.Container(
             width=90,
             height=90,
-            bgcolor="black",
-            border_radius=10,
+            bgcolor="#FFD54F",
+            border_radius=20,
             rotate=0,
             animate_rotation=ft.Animation(18000, ft.AnimationCurve.LINEAR),
         )
@@ -1168,42 +1358,42 @@ async def build_ui(page: ft.Page):
         async def on_rate_change(e):
             await prefs.set("last_rate_pct", rate_input.value)
 
-        org_input = ft.TextField(
+        org_input = NFTextField(
             value=last_org, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
             text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
             capitalization=ft.TextCapitalization.WORDS, max_length=40,
         )
         org_input.on_change = with_length_warning(org_input, 40, on_org_change)
-        salary_input = ft.TextField(
+        salary_input = NFTextField(
             value=last_salary, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
             border_color=PURPLE_TEXT, color=PURPLE_TEXT, max_length=15,
             text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         )
         salary_input.on_change = with_length_warning(salary_input, 15, on_salary_change)
-        increment_label_input = ft.TextField(
+        increment_label_input = NFTextField(
             value=last_increment_label, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
             text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
             capitalization=ft.TextCapitalization.WORDS, max_length=30,
         )
         increment_label_input.on_change = with_length_warning(increment_label_input, 30, on_increment_label_change)
-        increment_input = ft.TextField(
+        increment_input = NFTextField(
             value=last_increment_pct, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
             border_color=PURPLE_TEXT, color=PURPLE_TEXT, max_length=6,
             text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         )
         increment_input.on_change = with_length_warning(increment_input, 6, on_increment_change)
-        rate_input = ft.TextField(
+        rate_input = NFTextField(
             value=last_rate_pct, keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF",
             border_color=PURPLE_TEXT, color=PURPLE_TEXT, max_length=6,
             text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
         )
         rate_input.on_change = with_length_warning(rate_input, 6, on_rate_change)
 
-        result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
-        result_monthly_allowance = ft.Text(spans=[ft.TextSpan("Monthly Housing Allowance: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        result_basic = ft.Text(spans=[ft.TextSpan("New Basic: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        result_increment = ft.Text(spans=[ft.TextSpan("Increment Addition: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        result_total = ft.Text(spans=[ft.TextSpan("Annual Salary: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
+        result_upfront = ft.Text(spans=[ft.TextSpan("Upfront: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=18)
+        result_monthly_allowance = ft.Text(spans=[ft.TextSpan("Monthly Housing Allowance: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=14)
+        result_basic = ft.Text(spans=[ft.TextSpan("New Basic: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=14)
+        result_increment = ft.Text(spans=[ft.TextSpan("Increment Addition: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=14)
+        result_total = ft.Text(spans=[ft.TextSpan("Annual Salary: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=14)
 
         async def on_calculate_click(e):
             try:
@@ -1291,22 +1481,22 @@ async def build_ui(page: ft.Page):
         async def sm_on_rent_change(e):
             await prefs.set("sm_rent", sm_rent_input.value)
 
-        sm_basic_input = ft.TextField(value=sm_last_basic, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+        sm_basic_input = NFTextField(value=sm_last_basic, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         sm_basic_input.on_change = with_length_warning(sm_basic_input, 15, sm_on_basic_change)
-        sm_housing_input = ft.TextField(value=sm_last_housing, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+        sm_housing_input = NFTextField(value=sm_last_housing, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         sm_housing_input.on_change = with_length_warning(sm_housing_input, 15, sm_on_housing_change)
-        sm_transport_input = ft.TextField(value=sm_last_transport, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+        sm_transport_input = NFTextField(value=sm_last_transport, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         sm_transport_input.on_change = with_length_warning(sm_transport_input, 15, sm_on_transport_change)
-        sm_other_input = ft.TextField(value=sm_last_other, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+        sm_other_input = NFTextField(value=sm_last_other, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         sm_other_input.on_change = with_length_warning(sm_other_input, 15, sm_on_other_change)
-        sm_rent_input = ft.TextField(value=sm_last_rent, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+        sm_rent_input = NFTextField(value=sm_last_rent, keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         sm_rent_input.on_change = with_length_warning(sm_rent_input, 15, sm_on_rent_change)
 
-        sm_result_gross = ft.Text(spans=[ft.TextSpan("Gross Pay (Monthly): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=16)
-        sm_result_pension = ft.Text(spans=[ft.TextSpan("Pension (8%): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        sm_result_nhf = ft.Text(spans=[ft.TextSpan("NHF (2.5%): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        sm_result_paye = ft.Text(spans=[ft.TextSpan("PAYE Tax: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        sm_result_net = ft.Text(spans=[ft.TextSpan("Net Pay (Monthly): ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
+        sm_result_gross = ft.Text(spans=[ft.TextSpan("Gross Pay (Monthly): ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=16)
+        sm_result_pension = ft.Text(spans=[ft.TextSpan("Pension (8%): ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_RED, weight=ft.FontWeight.BOLD))], size=14)
+        sm_result_nhf = ft.Text(spans=[ft.TextSpan("NHF (2.5%): ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_RED, weight=ft.FontWeight.BOLD))], size=14)
+        sm_result_paye = ft.Text(spans=[ft.TextSpan("PAYE Tax: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_RED, weight=ft.FontWeight.BOLD))], size=14)
+        sm_result_net = ft.Text(spans=[ft.TextSpan("Net Pay (Monthly): ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=18)
         sm_status_text = ft.Text("", color="white", size=12, text_align=ft.TextAlign.CENTER)
 
         last_sm_result = {}
@@ -1338,7 +1528,7 @@ async def build_ui(page: ft.Page):
                 sm_result_pension.spans[1].text = f"₦{pension_annual/12.0:,.2f}"
                 sm_result_nhf.spans[1].text = f"₦{nhf_annual/12.0:,.2f}"
                 sm_result_paye.spans[1].text = f"₦{paye_monthly:,.2f}"
-                sm_result_net.spans[1].text = f"₦{net_monthly:,.2f}"
+                sm_result_net.spans[1].text = fmt_money(net_monthly)
 
                 last_sm_result.clear()
                 last_sm_result.update({
@@ -1395,12 +1585,9 @@ async def build_ui(page: ft.Page):
                 f"PAYE Tax: ₦{r['paye_monthly']:,.2f}\n"
                 f"Net Pay (Monthly): ₦{r['net_monthly']:,.2f}"
             )
-            try:
-                await page.clipboard.set(summary)
-                sm_status_text.value = "Copied to clipboard! Paste it in WhatsApp, Email, etc."
-            except Exception:
-                sm_status_text.value = "Could not copy automatically."
+            sm_status_text.value = ""
             page.update()
+            share_payslip(dict(r), summary)
 
         async def sm_show_history(e):
             try:
@@ -1754,7 +1941,7 @@ async def build_ui(page: ft.Page):
 
         async def open_alert_rules_dialog(e=None):
             rules_col = ft.Column([], spacing=4, tight=True)
-            kw_tf = ft.TextField(label="Alert contains (e.g. MOB TOPUP)", dense=True, text_size=13,
+            kw_tf = NFTextField(label="Alert contains (e.g. MOB TOPUP)", dense=True, text_size=13,
                                  color=PURPLE_TEXT, capitalization=ft.TextCapitalization.CHARACTERS, max_length=30)
             cat_dd = ft.Dropdown(label="Put it in category", value="Other", options=category_dropdown_options(),
                                  dense=True, text_size=13, color=PURPLE_TEXT)
@@ -2050,16 +2237,16 @@ async def build_ui(page: ft.Page):
                     dense=True, text_size=13, color=PURPLE_TEXT,
                 )
                 amt = r.get("amount")
-                amount_tf = ft.TextField(label="Amount (₦)", value=(f"{amt:.2f}" if amt is not None else ""),
+                amount_tf = NFTextField(label="Amount (₦)", value=(f"{amt:.2f}" if amt is not None else ""),
                                          keyboard_type=ft.KeyboardType.NUMBER, dense=True, text_size=13, color=PURPLE_TEXT)
                 cat = r.get("category") if r.get("category") in CATEGORY_OPTIONS else "Other"
                 cat_dd = ft.Dropdown(label="Category", value=cat, options=category_dropdown_options(),
                                      dense=True, text_size=13, color=PURPLE_TEXT)
-                note_tf = ft.TextField(label="Note", value=r.get("note", ""), dense=True, text_size=13, color=PURPLE_TEXT)
+                note_tf = NFTextField(label="Note", value=r.get("note", ""), dense=True, text_size=13, color=PURPLE_TEXT)
                 form_err = ft.Text("", size=11, color="#C62828")
                 remember_cb = ft.Checkbox(label="Always use this category for alerts containing:", value=False,
                                           label_style=ft.TextStyle(size=12, color=PURPLE_TEXT))
-                remember_tf = ft.TextField(value=suggest_alert_keyword(r.get("note", "") or r.get("text", "")),
+                remember_tf = NFTextField(value=suggest_alert_keyword(r.get("note", "") or r.get("text", "")),
                                            dense=True, text_size=13, color=PURPLE_TEXT,
                                            capitalization=ft.TextCapitalization.CHARACTERS, max_length=30)
 
@@ -2223,6 +2410,62 @@ async def build_ui(page: ft.Page):
         async def save_budgets(budgets):
             await prefs.set(profile_key("category_budgets"), json.dumps(budgets))
 
+        # -------------------- REPEATING ENTRIES (per profile) --------------------
+        # e.g. rent, salary, subscriptions: added by the app itself every month on the chosen day.
+        async def load_recurring(profile_num=None):
+            try:
+                raw = await prefs.get(f"recurring_rules_{profile_num or active_profile_state['value']}")
+                rules = json.loads(raw) if raw else []
+                return [r for r in rules if isinstance(r, dict)] if isinstance(rules, list) else []
+            except Exception:
+                return []
+
+        async def save_recurring(rules, profile_num=None):
+            await prefs.set(f"recurring_rules_{profile_num or active_profile_state['value']}", json.dumps(rules))
+
+        async def apply_recurring_all():
+            """Adds every repeating entry that has fallen due, in all profiles. Returns how many were added."""
+            added = 0
+            today_d = datetime.date.today()
+            for i in range(1, PROFILE_COUNT + 1):
+                rules = await load_recurring(i)
+                if not rules:
+                    continue
+                new_entries = []
+                for r in rules:
+                    for due in recurring_due_dates(r, today_d):
+                        r["last_added"] = f"{due.year:04d}-{due.month:02d}"
+                        try:
+                            amount = float(r.get("amount", 0) or 0)
+                        except (TypeError, ValueError):
+                            amount = 0.0
+                        if amount <= 0:
+                            continue
+                        new_entries.append({
+                            "type": "income" if r.get("type") == "income" else "expense",
+                            "category": r.get("category", "Other") or "Other",
+                            "amount": amount,
+                            "charge": 0.0,
+                            "note": (r.get("note") or "").strip() or "Repeating entry",
+                            "date": due.isoformat(),
+                            "repeat": True,
+                        })
+                if not new_entries:
+                    continue
+                key = f"money_transactions_{i}"
+                try:
+                    raw = await prefs.get(key)
+                    full = json.loads(raw) if raw else []
+                except Exception:
+                    full = None  # couldn't read the list: don't risk overwriting it
+                if full is None or not isinstance(full, list):
+                    continue
+                new_entries.sort(key=lambda t: t["date"], reverse=True)
+                await prefs.set(key, json.dumps((new_entries + full)[:10000]))
+                await save_recurring(rules, i)
+                added += len(new_entries)
+            return added
+
         # -------------------- QUICK ADD SHORTCUTS (per profile) --------------------
         async def load_quick_add():
             try:
@@ -2236,7 +2479,7 @@ async def build_ui(page: ft.Page):
 
         def open_budget_dialog():
             budget_category_picker, budget_category_state = build_category_picker("Food")
-            budget_amount_input = ft.TextField(
+            budget_amount_input = NFTextField(
                 keyboard_type=ft.KeyboardType.NUMBER, max_length=15,
                 bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
                 text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
@@ -2273,8 +2516,8 @@ async def build_ui(page: ft.Page):
                     content=ft.Column(
                         [
                             ft.Text("Set a monthly spending limit for a category. You'll get a visual warning as you approach or exceed it.", color=DARK_TEXT, size=12),
-                            field_with_caption("Category", budget_category_picker),
-                            field_with_caption("Monthly Limit (₦)", budget_amount_input),
+                            field_with_caption("Category", budget_category_picker, on_white=True),
+                            field_with_caption("Monthly Limit (₦)", budget_amount_input, on_white=True),
                             budget_error_text,
                         ],
                         tight=True, spacing=15,
@@ -2377,6 +2620,25 @@ async def build_ui(page: ft.Page):
             return bytes(pdf.output())
 
         pdf_file_picker = ft.FilePicker()
+        # While you are away in the phone's file chooser or share sheet, the app lock (PIN) must
+        # not treat it as "left the app" and cover the screen the moment you come back.
+        external_busy = {"n": 0, "until": 0.0}
+
+        async def picker_save_file(**kwargs):
+            external_busy["n"] += 1
+            try:
+                return await pdf_file_picker.save_file(**kwargs)
+            finally:
+                external_busy["n"] -= 1
+                external_busy["until"] = time.time() + 5
+
+        async def picker_pick_files(**kwargs):
+            external_busy["n"] += 1
+            try:
+                return await pdf_file_picker.pick_files(**kwargs)
+            finally:
+                external_busy["n"] -= 1
+                external_busy["until"] = time.time() + 5
         page.services.append(pdf_file_picker)
 
         async def export_month_pdf(e):
@@ -2400,7 +2662,7 @@ async def build_ui(page: ft.Page):
                 mt_status_text.value = f"Couldn't create the PDF ({type(ex).__name__}). Please try again."
                 page.update()
                 return
-            file_path = await pdf_file_picker.save_file(
+            file_path = await picker_save_file(
                 dialog_title="Save Monthly Log",
                 file_name=f"NairaFinanceHub_{safe_filename(active_name)}_{safe_filename(month_name)}.pdf",
                 file_type=ft.FilePickerFileType.CUSTOM,
@@ -2429,7 +2691,7 @@ async def build_ui(page: ft.Page):
                 mt_status_text.value = f"Couldn't create the PDF ({type(ex).__name__}). Please try again."
                 page.update()
                 return
-            file_path = await pdf_file_picker.save_file(
+            file_path = await picker_save_file(
                 dialog_title="Save Annual Log",
                 file_name=f"NairaFinanceHub_{safe_filename(active_name)}_{view_year}_Annual.pdf",
                 file_type=ft.FilePickerFileType.CUSTOM,
@@ -2463,7 +2725,8 @@ async def build_ui(page: ft.Page):
                     quick = json.loads(raw_qa) if raw_qa else []
                 except Exception:
                     quick = []
-                profiles_data[str(i)] = {"transactions": txns, "budgets": budgets, "quick_add": quick}
+                profiles_data[str(i)] = {"transactions": txns, "budgets": budgets, "quick_add": quick,
+                                         "recurring": await load_recurring(i)}
 
             # Everything else you'd hate to lose on a new phone: Ajo groups, your custom
             # categories, alert rules and saved salary calculations.
@@ -2487,7 +2750,7 @@ async def build_ui(page: ft.Page):
             }
             backup_bytes, ext = make_branded_file("backup_card.png", json.dumps(backup_obj).encode("utf-8"))
 
-            file_path = await pdf_file_picker.save_file(
+            file_path = await picker_save_file(
                 dialog_title="Save Backup File",
                 file_name=f"NairaFinanceHub_Backup_{datetime.date.today().isoformat()}.{ext}",
                 file_type=ft.FilePickerFileType.CUSTOM,
@@ -2498,7 +2761,7 @@ async def build_ui(page: ft.Page):
             page.update()
 
         async def restore_data(e):
-            result = await pdf_file_picker.pick_files(
+            result = await picker_pick_files(
                 dialog_title="Select Backup File to Restore",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["png", "json"],
@@ -2550,9 +2813,9 @@ async def build_ui(page: ft.Page):
                     title=ft.Text("Restore this backup?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
                     content=ft.Text(
                         (f"Backup made on {created}.\n\n" if created else "") +
-                        "Your Money Tracker transactions, budgets and Quick Add shortcuts on this phone will be "
-                        "REPLACED by the ones in the backup. Ajo groups, categories and alert rules from the backup "
-                        "are added to what you already have.",
+                        "Your Money Tracker transactions, budgets, Quick Add shortcuts and repeating entries on this "
+                        "phone will be REPLACED by the ones in the backup. Ajo groups, categories, alert rules and "
+                        "savings goals from the backup are added to what you already have.",
                         color=DARK_TEXT, size=13),
                     actions=[
                         ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
@@ -2574,6 +2837,8 @@ async def build_ui(page: ft.Page):
                     await prefs.set(f"category_budgets_{i}", json.dumps(profile_data.get("budgets", {})))
                     if "quick_add" in profile_data:
                         await prefs.set(f"quick_add_shortcuts_{i}", json.dumps(profile_data.get("quick_add", [])))
+                    if isinstance(profile_data.get("recurring"), list):
+                        await save_recurring(profile_data["recurring"], i)
                 restored_names = backup_obj.get("profile_names", {})
                 if restored_names:
                     profile_names_state.clear()
@@ -2596,6 +2861,7 @@ async def build_ui(page: ft.Page):
             try:
                 await refresh_quick_add_row()
                 await refresh_ajo_ui()
+                await refresh_home_ui()
             except Exception:
                 pass
             page.update()
@@ -2642,6 +2908,15 @@ async def build_ui(page: ft.Page):
                 cur.extend(r for r in b_rules if isinstance(r, dict) and r.get("keyword") not in have)
                 await save_alert_rules(cur)
 
+            # Savings goals: add the ones this phone doesn't have yet.
+            b_goals = [g for g in parse("savings_goals", []) if isinstance(g, dict) and g.get("id")]
+            if b_goals:
+                cur = await get_json("savings_goals", [])
+                cur = cur if isinstance(cur, list) else []
+                have = {g.get("id") for g in cur if isinstance(g, dict)}
+                cur.extend(g for g in b_goals if g["id"] not in have)
+                await prefs.set("savings_goals", json.dumps(cur))
+
             # Saved salary calculations: only fill in if this phone has none.
             if "salary_history" in extras and not await get_json("salary_history", []):
                 await prefs.set("salary_history", extras["salary_history"])
@@ -2660,7 +2935,7 @@ async def build_ui(page: ft.Page):
                             ),
                             ft.Text("📤 Backup", weight=ft.FontWeight.BOLD, color="#C62828", size=13),
                             ft.Text(
-                                "Tap 'Backup Data' to save everything into one file: all 3 profiles (transactions, budgets, Quick Add shortcuts and profile names), your Ajo groups, custom categories, alert rules and saved salary calculations. Choose where to save it — Downloads, Google Drive, or email it to yourself.",
+                                "Tap 'Backup Data' to save everything into one file: all 3 profiles (transactions, budgets, Quick Add shortcuts, repeating entries and profile names), your Ajo groups, savings goals, custom categories, alert rules and saved salary calculations. Your App Lock PIN is not included. Choose where to save it — Downloads, Google Drive, or email it to yourself.",
                                 color=DARK_TEXT, size=12
                             ),
                             ft.Text("📥 Restore", weight=ft.FontWeight.BOLD, color="#C62828", size=13),
@@ -2702,22 +2977,23 @@ async def build_ui(page: ft.Page):
         active_profile_state["value"] = await load_active_profile()
         profile_names_state.update(await load_profile_names())
 
-        def build_type_toggle(initial_value):
+        def build_type_toggle(initial_value, on_white=False):
             state = {"value": initial_value}
+            idle_bg = "#9E9E9E" if on_white else ft.Colors.with_opacity(0.3, ft.Colors.WHITE)
             income_btn = ft.ElevatedButton(
                 content=ft.Text("Income", weight=ft.FontWeight.BOLD, size=13, color="white"),
-                style=ft.ButtonStyle(bgcolor="#2E8B57" if initial_value == "income" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+                style=ft.ButtonStyle(bgcolor="#2E8B57" if initial_value == "income" else idle_bg),
             )
             expense_btn = ft.ElevatedButton(
                 content=ft.Text("Expense", weight=ft.FontWeight.BOLD, size=13, color="white"),
-                style=ft.ButtonStyle(bgcolor="#C62828" if initial_value == "expense" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+                style=ft.ButtonStyle(bgcolor="#C62828" if initial_value == "expense" else idle_bg),
             )
 
             def select(val):
                 def handler(e):
                     state["value"] = val
-                    income_btn.style = ft.ButtonStyle(bgcolor="#2E8B57" if val == "income" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE))
-                    expense_btn.style = ft.ButtonStyle(bgcolor="#C62828" if val == "expense" else ft.Colors.with_opacity(0.3, ft.Colors.WHITE))
+                    income_btn.style = ft.ButtonStyle(bgcolor="#2E8B57" if val == "income" else idle_bg)
+                    expense_btn.style = ft.ButtonStyle(bgcolor="#C62828" if val == "expense" else idle_bg)
                     page.update()
                 return handler
 
@@ -2791,7 +3067,7 @@ async def build_ui(page: ft.Page):
             page.update()
 
         def open_rename_dialog(profile_num):
-            name_field = ft.TextField(
+            name_field = NFTextField(
                 value=profile_names_state.get(str(profile_num), f"Profile {profile_num}"),
                 bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
                 text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
@@ -2880,11 +3156,11 @@ async def build_ui(page: ft.Page):
 
         mt_type_row, mt_type_state = build_type_toggle("income")
         mt_category_picker, mt_category_state = build_category_picker("Other")
-        mt_amount_input = ft.TextField(keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+        mt_amount_input = NFTextField(keyboard_type=ft.KeyboardType.NUMBER, max_length=15, bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         mt_amount_input.on_change = with_length_warning(mt_amount_input, 15)
-        mt_charge_input = ft.TextField(keyboard_type=ft.KeyboardType.NUMBER, max_length=15, hint_text="e.g. bank/POS fee", bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
+        mt_charge_input = NFTextField(keyboard_type=ft.KeyboardType.NUMBER, max_length=15, hint_text="e.g. bank/POS fee", bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD))
         mt_charge_input.on_change = with_length_warning(mt_charge_input, 15)
-        mt_note_input = ft.TextField(bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, max_length=100)
+        mt_note_input = NFTextField(bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, max_length=100)
         mt_note_input.on_change = with_length_warning(mt_note_input, 100)
         mt_status_text = ft.Text("", color="white", size=12, text_align=ft.TextAlign.CENTER)
 
@@ -2919,20 +3195,21 @@ async def build_ui(page: ft.Page):
 
         mt_month_label = ft.Text("", size=16, weight=ft.FontWeight.BOLD, color="white")
 
-        mt_summary_income = ft.Text(spans=[ft.TextSpan("Income: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        mt_summary_expense = ft.Text(spans=[ft.TextSpan("Expense: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        mt_summary_charges = ft.Text(spans=[ft.TextSpan("Bank Charges: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        mt_summary_net = ft.Text(spans=[ft.TextSpan("Net: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
+        mt_summary_income = ft.Text(spans=[ft.TextSpan("Income: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=14)
+        mt_summary_expense = ft.Text(spans=[ft.TextSpan("Expense: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_RED, weight=ft.FontWeight.BOLD))], size=14)
+        mt_summary_charges = ft.Text(spans=[ft.TextSpan("Bank Charges: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_RED, weight=ft.FontWeight.BOLD))], size=14)
+        mt_summary_net = ft.Text(spans=[ft.TextSpan("Net: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=18)
 
         mt_annual_label = ft.Text("", size=15, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)
-        mt_annual_income = ft.Text(spans=[ft.TextSpan("Total Income: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        mt_annual_expense = ft.Text(spans=[ft.TextSpan("Total Expense: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        mt_annual_charges = ft.Text(spans=[ft.TextSpan("Total Bank Charges: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=14)
-        mt_annual_net = ft.Text(spans=[ft.TextSpan("Annual Net: ", ft.TextStyle(color="orange", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color="green", weight=ft.FontWeight.BOLD))], size=18)
+        mt_annual_income = ft.Text(spans=[ft.TextSpan("Total Income: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=14)
+        mt_annual_expense = ft.Text(spans=[ft.TextSpan("Total Expense: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_RED, weight=ft.FontWeight.BOLD))], size=14)
+        mt_annual_charges = ft.Text(spans=[ft.TextSpan("Total Bank Charges: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_RED, weight=ft.FontWeight.BOLD))], size=14)
+        mt_annual_net = ft.Text(spans=[ft.TextSpan("Annual Net: ", ft.TextStyle(color="white", weight=ft.FontWeight.BOLD)), ft.TextSpan("₦0.00", ft.TextStyle(color=MONEY_GREEN, weight=ft.FontWeight.BOLD))], size=18)
         mt_annual_category_list_view = ft.Column([], spacing=6)
 
         mt_chart_container = ft.Container(padding=10, alignment=ft.Alignment(0, 0))
         mt_category_list_view = ft.Column([], spacing=6)
+        mt_breakdown_container = ft.Container()
         mt_transactions_list_view = ft.ListView(controls=[], spacing=8, height=260)
         mt_search_query = {"value": ""}
 
@@ -2940,8 +3217,8 @@ async def build_ui(page: ft.Page):
             mt_search_query["value"] = (mt_search_input.value or "").strip().lower()
             await refresh_money_ui()
 
-        mt_search_input = ft.TextField(
-            hint_text="Search by note or category...",
+        mt_search_input = NFTextField(
+            hint_text="Search transactions",
             bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
             text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
             prefix_icon=ft.Icons.SEARCH_ROUNDED,
@@ -2951,15 +3228,15 @@ async def build_ui(page: ft.Page):
 
 
         def open_edit_dialog(actual_idx, entry):
-            edit_type_row, edit_type_state = build_type_toggle(entry.get("type", "expense"))
+            edit_type_row, edit_type_state = build_type_toggle(entry.get("type", "expense"), on_white=True)
             edit_category_picker, edit_category_state = build_category_picker(entry.get("category", "Other"))
-            edit_amount_input = ft.TextField(
+            edit_amount_input = NFTextField(
                 value=str(entry.get("amount", "")), keyboard_type=ft.KeyboardType.NUMBER, max_length=15,
                 bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
                 text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
             )
             edit_amount_input.on_change = with_length_warning(edit_amount_input, 15)
-            edit_charge_input = ft.TextField(
+            edit_charge_input = NFTextField(
                 value=str(entry.get("charge", "")) if entry.get("charge") else "",
                 keyboard_type=ft.KeyboardType.NUMBER, max_length=15,
                 hint_text="e.g. bank/POS fee",
@@ -2967,7 +3244,7 @@ async def build_ui(page: ft.Page):
                 text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
             )
             edit_charge_input.on_change = with_length_warning(edit_charge_input, 15)
-            edit_note_input = ft.TextField(
+            edit_note_input = NFTextField(
                 value=entry.get("note", ""),
                 bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
                 text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
@@ -2979,7 +3256,7 @@ async def build_ui(page: ft.Page):
             is_auto_alert = (entry.get("note", "") or "").startswith("Auto:")
             edit_remember_cb = ft.Checkbox(label="Always use this category for bank alerts containing:", value=False,
                                            label_style=ft.TextStyle(size=12, color=PURPLE_TEXT))
-            edit_remember_tf = ft.TextField(value=suggest_alert_keyword(entry.get("note", "")), dense=True,
+            edit_remember_tf = NFTextField(value=suggest_alert_keyword(entry.get("note", "")), dense=True,
                                             bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
                                             capitalization=ft.TextCapitalization.CHARACTERS, max_length=30)
             remember_box = ft.Column([edit_remember_cb, edit_remember_tf], spacing=4, tight=True, visible=is_auto_alert)
@@ -3076,12 +3353,12 @@ async def build_ui(page: ft.Page):
                 content=ft.Container(
                     content=ft.Column(
                         [
-                            field_with_caption("Type", edit_type_row),
-                            field_with_caption("Category", edit_category_picker),
-                            field_with_caption("Amount (₦)", edit_amount_input),
-                            field_with_caption("Bank Charges (₦, optional)", edit_charge_input),
-                            field_with_caption("Note", edit_note_input),
-                            field_with_caption("Date", edit_date_button),
+                            field_with_caption("Type", edit_type_row, on_white=True),
+                            field_with_caption("Category", edit_category_picker, on_white=True),
+                            field_with_caption("Amount (₦)", edit_amount_input, on_white=True),
+                            field_with_caption("Bank Charges (₦, optional)", edit_charge_input, on_white=True),
+                            field_with_caption("Note", edit_note_input, on_white=True),
+                            field_with_caption("Date", edit_date_button, on_white=True),
                             remember_box,
                             edit_error_text,
                         ],
@@ -3090,6 +3367,7 @@ async def build_ui(page: ft.Page):
                     width=300,
                 ),
                 actions=[
+                    ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color="#666666")),
                     ft.TextButton("Delete", on_click=delete_from_edit, style=ft.ButtonStyle(color="#C62828")),
                     ft.TextButton("Save", on_click=save_edit, style=ft.ButtonStyle(color=PURPLE_TEXT)),
                 ],
@@ -3143,7 +3421,8 @@ async def build_ui(page: ft.Page):
             mt_summary_income.spans[1].text = f"₦{month_income:,.2f}"
             mt_summary_expense.spans[1].text = f"₦{month_expense:,.2f}"
             mt_summary_charges.spans[1].text = f"₦{month_charges:,.2f}"
-            mt_summary_net.spans[1].text = f"₦{net:,.2f}"
+            mt_summary_net.spans[1].text = fmt_money(net)
+            mt_summary_net.spans[1].style = ft.TextStyle(color=MONEY_GREEN if net >= 0 else MONEY_RED, weight=ft.FontWeight.BOLD)
 
             # Annual accumulation across every month of the currently-viewed year
             annual_income = 0.0
@@ -3171,7 +3450,8 @@ async def build_ui(page: ft.Page):
             mt_annual_income.spans[1].text = f"₦{annual_income:,.2f}"
             mt_annual_expense.spans[1].text = f"₦{annual_expense:,.2f}"
             mt_annual_charges.spans[1].text = f"₦{annual_charges:,.2f}"
-            mt_annual_net.spans[1].text = f"₦{annual_net:,.2f}"
+            mt_annual_net.spans[1].text = fmt_money(annual_net)
+            mt_annual_net.spans[1].style = ft.TextStyle(color=MONEY_GREEN if annual_net >= 0 else MONEY_RED, weight=ft.FontWeight.BOLD)
 
             if annual_category_totals:
                 annual_entries = []
@@ -3239,6 +3519,96 @@ async def build_ui(page: ft.Page):
             else:
                 mt_chart_container.content = ft.Text("No transactions this month yet.", color="white", size=13, text_align=ft.TextAlign.CENTER)
 
+            # ---- "Where your money went": a ring by category, and this month against last month
+            try:
+                exp_items = sorted(((c, v["expense"]) for c, v in category_totals.items() if v["expense"] > 0),
+                                   key=lambda x: x[1], reverse=True)
+                exp_total = sum(a for _, a in exp_items)
+                real_today = datetime.date.today()
+                viewing_now = (view_year, view_month) == (real_today.year, real_today.month)
+                p_year, p_month = prev_month(view_year, view_month)
+                this_spent = month_expense + month_charges
+                last_stats = month_stats(transactions, p_year, p_month, up_to_day=real_today.day if viewing_now else 31)
+                last_spent = last_stats["spent"]
+                this_name = datetime.date(view_year, view_month, 1).strftime("%b")
+                last_name = datetime.date(p_year, p_month, 1).strftime("%b")
+                breakdown = [ft.Text("Where your money went", color="white", weight=ft.FontWeight.BOLD, size=14)]
+                if exp_total > 0:
+                    top = exp_items[:5]
+                    others = sum(a for _, a in exp_items[5:])
+                    if others > 0:
+                        top.append(("Others", others))
+                    arcs, legend = [], []
+                    angle = -math.pi / 2
+                    gap = 0.06 if len(top) > 1 else 0.0
+                    for i, (cat, amt) in enumerate(top):
+                        frac = amt / exp_total
+                        sweep = (2 * math.pi - 0.001) if len(top) == 1 else max(frac * 2 * math.pi - gap, 0.02)
+                        ring_color = RING_COLORS[i % len(RING_COLORS)]
+                        arcs.append(cv.Arc(x=14, y=14, width=112, height=112, start_angle=angle, sweep_angle=sweep,
+                                           paint=ft.Paint(style=ft.PaintingStyle.STROKE, stroke_width=24, color=ring_color)))
+                        angle += frac * 2 * math.pi
+                        legend.append(ft.Row(
+                            [
+                                ft.Container(width=10, height=10, border_radius=5, bgcolor=ring_color),
+                                ft.Text(cat, color="white", size=12, expand=True, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                ft.Text(f"{frac * 100:.0f}%", color="white", size=12, weight=ft.FontWeight.BOLD),
+                            ],
+                            spacing=6,
+                        ))
+                    ring = ft.Stack(
+                        [
+                            cv.Canvas(arcs, width=140, height=140),
+                            ft.Container(
+                                content=ft.Column(
+                                    [ft.Text("Spent", size=10, color="#DDDDDD"),
+                                     ft.Text(fmt_compact(exp_total), size=14, weight=ft.FontWeight.BOLD, color="white")],
+                                    spacing=0, tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                width=140, height=140, alignment=ft.Alignment(0, 0),
+                            ),
+                        ],
+                        width=140, height=140,
+                    )
+                    breakdown.append(ft.Row([ring, ft.Column(legend, spacing=6, expand=True, tight=True)], spacing=12,
+                                            vertical_alignment=ft.CrossAxisAlignment.CENTER))
+                else:
+                    breakdown.append(ft.Text("No spending recorded this month yet.", color="white", size=12))
+
+                if this_spent > 0 or last_spent > 0:
+                    biggest = max(this_spent, last_spent, 1.0)
+                    this_label = f"{this_name} so far" if viewing_now else this_name
+                    last_label = f"{last_name} by day {real_today.day}" if viewing_now else last_name
+
+                    def compare_row(label, amount, bar_color):
+                        return ft.Column(
+                            [
+                                ft.Row([ft.Text(label, color="white", size=12), ft.Text(fmt_money(amount, 0), color="white", size=12, weight=ft.FontWeight.BOLD)],
+                                       alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                ui_progress_bar(amount / biggest * 100.0, bar_color, height=8),
+                            ],
+                            spacing=3, tight=True,
+                        )
+
+                    breakdown.append(ft.Divider(height=1, color="#4B0082"))
+                    breakdown.append(ft.Text("This month vs last month" if viewing_now else f"{this_name} vs {last_name}",
+                                             color="white", weight=ft.FontWeight.BOLD, size=13))
+                    breakdown.append(compare_row(this_label, this_spent, "#FF6B6B"))
+                    breakdown.append(compare_row(last_label, last_spent, "#64B5F6"))
+                    if last_spent > 0:
+                        diff = (this_spent - last_spent) / last_spent * 100.0
+                        versus = "at this point last month" if viewing_now else "the month before"
+                        if abs(diff) < 1:
+                            verdict, verdict_color = f"About the same as {versus}.", "white"
+                        elif diff < 0:
+                            verdict, verdict_color = f"{abs(diff):.0f}% less than {versus}. Well done!", MONEY_GREEN
+                        else:
+                            verdict, verdict_color = f"{diff:.0f}% more than {versus}.", MONEY_RED
+                        breakdown.append(ft.Text(verdict, color=verdict_color, size=12, weight=ft.FontWeight.BOLD))
+                mt_breakdown_container.content = ft.Column(breakdown, spacing=8, tight=True)
+            except Exception:
+                mt_breakdown_container.content = None  # never let the chart stop the page loading
+
             if category_totals:
                 list_entries = []
                 for cat, v in category_totals.items():
@@ -3285,6 +3655,7 @@ async def build_ui(page: ft.Page):
                                             border_radius=4,
                                         ),
                                         width=220, height=8, bgcolor=ft.Colors.with_opacity(0.2, ft.Colors.WHITE), border_radius=4,
+                                        alignment=ft.Alignment(-1, 0),
                                     ),
                                     ft.Text(status_text, color=status_color, size=11, weight=ft.FontWeight.BOLD),
                                 ],
@@ -3364,7 +3735,7 @@ async def build_ui(page: ft.Page):
                 if is_auto:
                     note = note[5:].strip()
                 title = note or t["type"].capitalize()
-                sub = f"{t.get('category', 'Other')} • {fmt_txn_when(t)}" + ("  ⚡" if is_auto else "")
+                sub = ("⚡ " if is_auto else "") + ("🔁 " if t.get("repeat") else "") + f"{t.get('category', 'Other')} • {fmt_txn_when(t)}"
                 rows.append(
                     ft.Container(
                         content=ft.Row(
@@ -3526,14 +3897,14 @@ async def build_ui(page: ft.Page):
                         style=ft.ButtonStyle(bgcolor=chip_color),
                     )
                 )
-            mt_quick_add_row.controls = chips if chips else [ft.Text("No shortcuts yet — add some from the ☰ menu.", color="white", size=11, italic=True)]
+            mt_quick_add_row.controls = chips if chips else [ft.Text("No shortcuts yet. Add some with the Options button.", color="white", size=11, italic=True)]
 
         async def manage_categories_dialog(e):
             changes = await load_category_changes()
 
             list_col = ft.Column([], spacing=6)
             selected_icon_key = {"value": None}
-            new_cat_field = ft.TextField(label="New Category Name", bgcolor="#FFFFFF", color="black", text_style=ft.TextStyle(color="black"), capitalization=ft.TextCapitalization.WORDS, dense=True, max_length=25)
+            new_cat_field = NFTextField(label="New Category Name", bgcolor="#FFFFFF", color="black", text_style=ft.TextStyle(color="black"), capitalization=ft.TextCapitalization.WORDS, dense=True, max_length=25)
             new_cat_field.on_change = with_length_warning(new_cat_field, 25)
             add_error_text = ft.Text("", color="red", size=12)
 
@@ -3649,11 +4020,11 @@ async def build_ui(page: ft.Page):
         async def manage_quick_add_dialog(e):
             shortcuts = await load_quick_add()
 
-            new_label = ft.TextField(label="Label", bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), dense=True, capitalization=ft.TextCapitalization.WORDS, max_length=30)
+            new_label = NFTextField(label="Label", bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), dense=True, capitalization=ft.TextCapitalization.WORDS, max_length=30)
             new_label.on_change = with_length_warning(new_label, 30)
-            new_type_row, new_type_state = build_type_toggle("expense")
+            new_type_row, new_type_state = build_type_toggle("expense", on_white=True)
             new_category_picker, new_category_state = build_category_picker("Other")
-            new_amount = ft.TextField(label="Amount (₦)", keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), dense=True, max_length=15)
+            new_amount = NFTextField(label="Amount (₦)", keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), dense=True, max_length=15)
             new_amount.on_change = with_length_warning(new_amount, 15)
             error_text = ft.Text("", color="red", size=12)
 
@@ -3866,6 +4237,7 @@ async def build_ui(page: ft.Page):
                 make_option_row(ft.Icons.BACKUP_ROUNDED, "Backup Data", "#1E88E5", backup_data),
                 make_option_row(ft.Icons.RESTORE_ROUNDED, "Restore Data", "#1E88E5", restore_data),
                 make_sync_option_row(ft.Icons.HELP_OUTLINE_ROUNDED, "Backup & Restore Help", "#1E88E5", show_backup_help),
+                make_option_row(ft.Icons.REPEAT_ROUNDED, "Repeating Entries", "#2E8B57", manage_recurring_dialog),
                 make_option_row(ft.Icons.FLASH_ON_ROUNDED, "Quick Add Shortcuts", "#2E8B57", manage_quick_add_dialog),
                 make_option_row(ft.Icons.CATEGORY_ROUNDED, "Manage Categories", "#2E8B57", manage_categories_dialog),
             ]
@@ -3874,7 +4246,7 @@ async def build_ui(page: ft.Page):
             if any(os.path.exists(f) for f in (NOTIF_INBOX_FILE, NOTIF_INBOX_FILE + ".processing",
                                                NOTIF_SEEN_PACKAGES_FILE, NOTIF_RECENT_FILE)):
                 rows.append(make_option_row(ft.Icons.SYNC_ROUNDED, "Notification Sync", "#2E8B57", open_notification_sync_dialog))
-            show_menu_dialog("Money Tracker Options", rows, 460,
+            show_menu_dialog("Money Tracker Options", rows, min(520, 54 * len(rows) + 8),
                              back_to=open_more_options_menu if from_main_menu else None)
 
         def open_settings_menu(e):
@@ -3897,9 +4269,10 @@ async def build_ui(page: ft.Page):
                 make_switch_row(ft.Icons.AUTO_AWESOME_ROUNDED, "Motion effects", "#FF8C00", motion["on"], toggle_motion),
                 ft.Text("Turn Motion effects off if the app feels slow on your phone.", color="#888888", size=11),
                 ft.Divider(height=1, color="#DDDDDD"),
+                make_sync_option_row(ft.Icons.LOCK_ROUNDED, f"App lock (PIN): {'On' if pin_state['hash'] else 'Off'}", "#C62828", open_pin_settings),
                 make_sync_option_row(ft.Icons.SCHOOL_ROUNDED, "Replay Tutorial", "#FFD700", lambda e: show_tutorial_screen()),
             ]
-            show_menu_dialog("Settings", rows, 260, back_to=open_more_options_menu)
+            show_menu_dialog("Settings", rows, 270, back_to=open_more_options_menu)
 
         def open_more_options_menu(e):
             def money_options_from_menu(e):
@@ -3928,7 +4301,7 @@ async def build_ui(page: ft.Page):
                 ft.Text("Tip: tap the arrow beside Money Tracker for Backup, Restore, PDF export and more.",
                         color="#888888", size=11),
             ]
-            show_menu_dialog("Menu", rows, 400)
+            show_menu_dialog("Menu", rows, 360)
 
         money_options_btn = ft.ElevatedButton(
             content=ft.Row(
@@ -3955,6 +4328,12 @@ async def build_ui(page: ft.Page):
         mt_chart_card = ft.Container(
             content=mt_chart_container,
             padding=10, border_radius=15,
+            bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
+        )
+
+        mt_breakdown_card = ft.Container(
+            content=mt_breakdown_container,
+            padding=15, border_radius=15,
             bgcolor=ft.Colors.with_opacity(0.55, ft.Colors.BLACK),
         )
 
@@ -3991,6 +4370,10 @@ async def build_ui(page: ft.Page):
         # Don't read captured bank alerts while the app is opening; that runs a few
         # seconds after the first screen is up (see "after_first_screen" below).
         last_auto_ingest["t"] = time.monotonic()
+        try:
+            await apply_recurring_all()  # add rent/salary etc. that fell due while the app was closed
+        except Exception:
+            pass
         await refresh_money_ui()
         await refresh_quick_add_row()
 
@@ -4003,6 +4386,7 @@ async def build_ui(page: ft.Page):
                 mt_summary_container, ft.Container(height=10),
                 mt_annual_container, ft.Container(height=10),
                 mt_chart_card, ft.Container(height=10),
+                mt_breakdown_card, ft.Container(height=10),
                 mt_category_card, ft.Container(height=10),
                 mt_list_card,
             ],
@@ -4274,7 +4658,7 @@ async def build_ui(page: ft.Page):
                         )
                     )
 
-                new_member_field = ft.TextField(hint_text="Member name", bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, dense=True, expand=True, disabled=not is_admin, max_length=30)
+                new_member_field = NFTextField(hint_text="Member name", bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, dense=True, expand=True, disabled=not is_admin, max_length=30)
                 new_member_field.on_change = with_length_warning(new_member_field, 30)
 
                 async def add_member(e):
@@ -4313,7 +4697,7 @@ async def build_ui(page: ft.Page):
 
                 new_member_field.on_submit = add_member  # keyboard ✓ adds the name too
 
-                contribution_field = ft.TextField(
+                contribution_field = NFTextField(
                     label="Contribution per person (₦)", value=str(active_group.get("contribution_amount", "")) if active_group.get("contribution_amount") else "",
                     keyboard_type=ft.KeyboardType.NUMBER, bgcolor="#FFFFFF", color="black",
                     text_style=ft.TextStyle(color="black", weight=ft.FontWeight.BOLD),
@@ -5395,6 +5779,11 @@ async def build_ui(page: ft.Page):
                             bgcolor=ft.Colors.with_opacity(0.2, ft.Colors.AMBER),
                         ),
                         ft.ElevatedButton(
+                            content=ft.Row([ft.Icon(ft.Icons.IOS_SHARE_ROUNDED, color="white", size=16), ft.Text("Share as Picture", color="white", weight=ft.FontWeight.BOLD)], spacing=6, tight=True),
+                            on_click=lambda e: share_ajo_round(active_group),
+                            style=ft.ButtonStyle(bgcolor="#8E24AA"),
+                        ),
+                        ft.ElevatedButton(
                             content=ft.Row([ft.Icon(ft.Icons.EDIT_NOTE_ROUNDED, color="white", size=16), ft.Text("Edit Order", color="white", weight=ft.FontWeight.BOLD)], spacing=6, tight=True),
                             on_click=edit_order_dialog,
                             style=ft.ButtonStyle(bgcolor="#1E88E5"),
@@ -5411,7 +5800,7 @@ async def build_ui(page: ft.Page):
             page.update()
 
         async def import_ajo_group(e):
-            result = await pdf_file_picker.pick_files(
+            result = await picker_pick_files(
                 dialog_title="Import Ajo Group",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["png", "json"],
@@ -5438,7 +5827,7 @@ async def build_ui(page: ft.Page):
                         return
                     raise
                 if not is_valid_ajo_group(imported_group):
-                    msg = ("That's a Money Tracker backup, not an Ajo group. Use ☰ → Restore Data for backups."
+                    msg = ("That's a Money Tracker backup, not an Ajo group. Use Money Tracker → Options → Restore Data for backups."
                            if isinstance(imported_group, dict) and "profiles" in imported_group
                            else "That doesn't look like a valid group file.")
                     page.show_dialog(ft.SnackBar(ft.Text(msg, color="white"), bgcolor="#C62828", duration=ft.Duration(seconds=5), behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
@@ -5468,9 +5857,9 @@ async def build_ui(page: ft.Page):
                 page.update()
 
         async def create_ajo_group_dialog(e=None):
-            name_field = ft.TextField(label="Group Name", bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, max_length=30)
+            name_field = NFTextField(label="Group Name", bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, max_length=30)
             name_field.on_change = with_length_warning(name_field, 30)
-            rules_field = ft.TextField(
+            rules_field = NFTextField(
                 label="Rules & Regulations (optional)", multiline=True, min_lines=3, max_lines=6,
                 bgcolor="#FFFFFF", color="black", text_style=ft.TextStyle(color="black"),
                 capitalization=ft.TextCapitalization.SENTENCES, max_length=500,
@@ -5554,7 +5943,7 @@ async def build_ui(page: ft.Page):
 
             def make_rename_group(target_group):
                 def _open_rename(e):
-                    rename_field = ft.TextField(value=target_group["name"], bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, autofocus=True, max_length=30)
+                    rename_field = NFTextField(value=target_group["name"], bgcolor="#FFFFFF", color=PURPLE_TEXT, text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), capitalization=ft.TextCapitalization.WORDS, autofocus=True, max_length=30)
                     rename_field.on_change = with_length_warning(rename_field, 30)
 
                     async def save_rename(e):
@@ -5715,7 +6104,7 @@ async def build_ui(page: ft.Page):
                 current_rules = current_active_group.get("rules", "")
 
                 if group_is_admin:
-                    rules_edit_field = ft.TextField(
+                    rules_edit_field = NFTextField(
                         value=current_rules, multiline=True, min_lines=4, max_lines=8,
                         bgcolor="#FFFFFF", color="black", text_style=ft.TextStyle(color="black"),
                         capitalization=ft.TextCapitalization.SENTENCES, max_length=500,
@@ -5758,7 +6147,7 @@ async def build_ui(page: ft.Page):
                 shared_copy = dict(current_active_group)
                 shared_copy["is_admin"] = False
                 export_bytes, ext = make_branded_file("ajo_card.png", json.dumps(shared_copy).encode("utf-8"))
-                file_path = await pdf_file_picker.save_file(
+                file_path = await picker_save_file(
                     dialog_title="Share Ajo Group",
                     file_name=f"NairaFinanceHub_Ajo_{safe_filename(current_active_group['name'])}.{ext}",
                     file_type=ft.FilePickerFileType.CUSTOM,
@@ -5782,7 +6171,7 @@ async def build_ui(page: ft.Page):
                     page.update()
                     return
 
-                note_field = ft.TextField(
+                note_field = NFTextField(
                     label="Note or instructions (optional)", multiline=True, min_lines=3, max_lines=6,
                     bgcolor="#FFFFFF", color="black", text_style=ft.TextStyle(color="black"),
                     capitalization=ft.TextCapitalization.SENTENCES, max_length=500,
@@ -5793,7 +6182,7 @@ async def build_ui(page: ft.Page):
                     page.pop_dialog()
                     try:
                         pdf_bytes = build_ajo_pdf_bytes(current_active_group, note=(note_field.value or "").strip())
-                        file_path = await pdf_file_picker.save_file(
+                        file_path = await picker_save_file(
                             dialog_title="Save Ajo Progress Report",
                             file_name=f"Ajo_{safe_filename(current_active_group['name'])}_Progress.pdf",
                             file_type=ft.FilePickerFileType.CUSTOM,
@@ -5892,18 +6281,1158 @@ async def build_ui(page: ft.Page):
             spacing=10,
         )
 
+        # ==================================================================
+        # HOME DASHBOARD, SAVINGS GOALS, REMINDERS, REPEATING ENTRIES,
+        # SHARE AS PICTURE AND APP LOCK
+        # ==================================================================
+        tab_labels = ["Home", "Housing Upfront", "Salary Management", "Money Tracker", "Ajo Groups"]
+        tab_icons = [ft.Icons.DASHBOARD_ROUNDED, ft.Icons.HOME_ROUNDED, ft.Icons.WORK_ROUNDED, ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, ft.Icons.GROUPS_ROUNDED]
+        tab_icon_colors = ["#FFD54F", "#FF8C00", "#E53935", "#1E88E5", "#8E24AA"]
+        CARD_BG = ft.Colors.with_opacity(0.55, ft.Colors.BLACK)
+        SOFT_TEXT = "#DDDDDD"
+
+        def snack(text, color=PURPLE_TEXT, seconds=3):
+            page.show_dialog(ft.SnackBar(ft.Text(text, color="white"), bgcolor=color, duration=ft.Duration(seconds=seconds),
+                                         behavior=ft.SnackBarBehavior.FLOATING, margin=ft.Margin.only(bottom=300, left=10, right=10)))
+            page.update()
+
+        async def go_to_page(label):
+            if label in tab_labels:
+                await select_tab(tab_labels.index(label))(None)
+
+        def dlg_field(**kwargs):
+            """A text box styled for the white pop-ups."""
+            return NFTextField(bgcolor="#FFFFFF", border_color=PURPLE_TEXT, color=PURPLE_TEXT,
+                               text_style=ft.TextStyle(color=PURPLE_TEXT, weight=ft.FontWeight.BOLD), **kwargs)
+
+        # -------------------- SAVINGS GOALS --------------------
+        MAX_GOALS = 10
+
+        async def load_goals():
+            try:
+                raw = await prefs.get("savings_goals")
+                goals = json.loads(raw) if raw else []
+                return [g for g in goals if isinstance(g, dict) and g.get("id")] if isinstance(goals, list) else []
+            except Exception:
+                return []
+
+        async def save_goals(goals):
+            await prefs.set("savings_goals", json.dumps(goals))
+
+        def goal_numbers(goal):
+            try:
+                target = float(goal.get("target", 0) or 0)
+                saved = float(goal.get("saved", 0) or 0)
+            except (TypeError, ValueError):
+                target, saved = 0.0, 0.0
+            return saved, target, ((saved / target * 100.0) if target > 0 else 0.0)
+
+        def goal_hint(goal, today_d):
+            saved, target, _pct = goal_numbers(goal)
+            if target > 0 and saved >= target:
+                return "Goal reached!", MONEY_GREEN
+            left = max(target - saved, 0.0)
+            try:
+                deadline = datetime.date.fromisoformat(goal.get("deadline") or "")
+            except Exception:
+                return f"{fmt_money(left, 0)} to go", SOFT_TEXT
+            days = (deadline - today_d).days
+            when = deadline.strftime("%d %b %Y").lstrip("0")
+            if days < 0:
+                return f"{fmt_money(left, 0)} to go · the target date ({when}) has passed", MONEY_RED
+            months_left = max(1, math.ceil(days / 30.4))
+            return f"{fmt_money(left, 0)} to go by {when} · about {fmt_money(left / months_left, 0)} a month", SOFT_TEXT
+
+        def open_goal_dialog(goal=None):
+            editing = goal is not None
+            current = goal or {}
+            name_field = dlg_field(value=current.get("name", ""), hint_text="e.g. Rent", max_length=40,
+                                   capitalization=ft.TextCapitalization.WORDS)
+            name_field.on_change = with_length_warning(name_field, 40)
+            try:
+                target_text = f"{float(current.get('target') or 0):.0f}" if current.get("target") else ""
+            except (TypeError, ValueError):
+                target_text = ""
+            target_field = dlg_field(value=target_text, hint_text="e.g. 500000", keyboard_type=ft.KeyboardType.NUMBER, max_length=15)
+            target_field.on_change = with_length_warning(target_field, 15)
+            try:
+                start_deadline = datetime.date.fromisoformat(current.get("deadline") or "")
+            except Exception:
+                start_deadline = None
+            deadline_state = {"value": start_deadline}
+            no_date_label = "Pick a target date (optional)"
+            deadline_text = ft.Text(start_deadline.strftime("%d %b %Y") if start_deadline else no_date_label,
+                                    color="#4B0082", size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+            error_text = ft.Text("", color="red", size=12)
+
+            def on_deadline_picked(e):
+                picked = e.control.value
+                if picked:
+                    deadline_state["value"] = picked_to_date(picked)
+                    deadline_text.value = deadline_state["value"].strftime("%d %b %Y")
+                    page.update()
+
+            deadline_picker = ft.DatePicker(
+                first_date=datetime.datetime.now(),
+                last_date=datetime.datetime.now() + datetime.timedelta(days=3650),
+                on_change=on_deadline_picked,
+            )
+
+            def clear_deadline(e):
+                deadline_state["value"] = None
+                deadline_text.value = no_date_label
+                page.update()
+
+            async def save_goal(e):
+                name = (name_field.value or "").strip()
+                try:
+                    target = to_number(target_field.value, required=True)
+                except (ValueError, TypeError):
+                    target = 0.0
+                if not name:
+                    error_text.value = "Give the goal a name."
+                elif target <= 0:
+                    error_text.value = "Enter the amount you want to save."
+                else:
+                    error_text.value = ""
+                goals = await load_goals()
+                if not error_text.value and not editing and len(goals) >= MAX_GOALS:
+                    error_text.value = f"You can keep up to {MAX_GOALS} goals. Delete one first."
+                if error_text.value:
+                    page.update()
+                    return
+                deadline = deadline_state["value"].isoformat() if deadline_state["value"] else ""
+                if editing:
+                    for g in goals:
+                        if g.get("id") == current.get("id"):
+                            g.update({"name": name, "target": target, "deadline": deadline})
+                else:
+                    goals.append({"id": new_ajo_id(), "name": name, "target": target, "saved": 0.0,
+                                  "deadline": deadline, "created": datetime.date.today().isoformat()})
+                await save_goals(goals)
+                page.pop_dialog()
+                await refresh_home_ui()
+                page.update()
+
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text("Edit Goal" if editing else "New Savings Goal", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text("What are you saving for, and how much do you need?", color=DARK_TEXT, size=12),
+                            field_with_caption("Goal name", name_field, on_white=True),
+                            field_with_caption("Target amount (₦)", target_field, on_white=True),
+                            ft.Row(
+                                [
+                                    ft.ElevatedButton(content=ft.Container(content=deadline_text, width=170),
+                                                      on_click=lambda e: page.show_dialog(deadline_picker),
+                                                      style=ft.ButtonStyle(bgcolor="#FFD700")),
+                                    ft.TextButton("Clear", on_click=clear_deadline, style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                                ],
+                                spacing=4, wrap=True,
+                            ),
+                            error_text,
+                        ],
+                        tight=True, spacing=14,
+                    ),
+                    width=300,
+                ),
+                actions=[
+                    ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                    ft.ElevatedButton("Save Goal", on_click=save_goal, style=ft.ButtonStyle(bgcolor="#2E8B57", color="white")),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        def open_goal_money_dialog(goal):
+            saved, target, pct = goal_numbers(goal)
+            amount_field = dlg_field(hint_text="e.g. 20000", keyboard_type=ft.KeyboardType.NUMBER, max_length=15)
+            amount_field.on_change = with_length_warning(amount_field, 15)
+            error_text = ft.Text("", color="red", size=12)
+
+            async def change(sign):
+                try:
+                    amount = to_number(amount_field.value, required=True)
+                except (ValueError, TypeError):
+                    amount = 0.0
+                if amount <= 0:
+                    error_text.value = "Enter an amount."
+                    page.update()
+                    return
+                goals = await load_goals()
+                reached = False
+                for g in goals:
+                    if g.get("id") == goal.get("id"):
+                        now_saved, now_target, _ = goal_numbers(g)
+                        if sign < 0 and amount > now_saved:
+                            error_text.value = f"There is only {fmt_money(now_saved, 0)} in this goal."
+                            page.update()
+                            return
+                        g["saved"] = round(now_saved + sign * amount, 2)
+                        reached = sign > 0 and now_target > 0 and now_saved < now_target <= g["saved"]
+                await save_goals(goals)
+                page.pop_dialog()
+                await refresh_home_ui()
+                page.update()
+                if reached:
+                    snack(f"You reached your goal: {goal.get('name', '')}!", color="#2E8B57", seconds=4)
+
+            async def add_money(e):
+                await change(1)
+
+            async def take_out(e):
+                await change(-1)
+
+            def edit_goal(e):
+                page.pop_dialog()
+                open_goal_dialog(goal)
+
+            def ask_delete(e):
+                page.pop_dialog()
+
+                async def do_delete(ev):
+                    await save_goals([g for g in await load_goals() if g.get("id") != goal.get("id")])
+                    page.pop_dialog()
+                    await refresh_home_ui()
+                    page.update()
+
+                page.show_dialog(ft.AlertDialog(
+                    scrollable=True, modal=True, bgcolor="#FFFFFF",
+                    title=ft.Text("Delete this goal?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                    content=ft.Text(f"“{goal.get('name', '')}” and its progress will be removed. This can't be undone.",
+                                    color=DARK_TEXT, size=13),
+                    actions=[
+                        ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                        ft.ElevatedButton("Delete", on_click=do_delete, style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
+                    ],
+                    actions_alignment=ft.MainAxisAlignment.END,
+                ))
+
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text(goal.get("name", "Goal"), color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text(f"{fmt_money(saved, 0)} saved of {fmt_money(target, 0)} ({pct:.0f}%)",
+                                    color=DARK_TEXT, size=13, weight=ft.FontWeight.BOLD),
+                            field_with_caption("Amount (₦)", amount_field, on_white=True),
+                            error_text,
+                            ft.Text("This only tracks your goal. It does not add a transaction to Money Tracker.",
+                                    color="#666666", size=11),
+                            ft.Row(
+                                [
+                                    ft.TextButton("Edit goal", on_click=edit_goal, style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                                    ft.TextButton("Delete goal", on_click=ask_delete, style=ft.ButtonStyle(color="#C62828")),
+                                ],
+                                spacing=4, wrap=True,
+                            ),
+                        ],
+                        tight=True, spacing=10,
+                    ),
+                    width=300,
+                ),
+                actions=[
+                    ft.TextButton("Close", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                    ft.TextButton("Take out", on_click=take_out, style=ft.ButtonStyle(color="#C62828")),
+                    ft.ElevatedButton("Add money", on_click=add_money, style=ft.ButtonStyle(bgcolor="#2E8B57", color="white")),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        # -------------------- REMINDERS --------------------
+        # Shown on the Home page, and once a day as a pop-up for the urgent ones. They appear when
+        # the app is opened; the app does not send notifications while it is closed.
+        async def compute_reminders(transactions=None):
+            items = []
+            today_d = datetime.date.today()
+            try:
+                for g in await load_ajo_groups():
+                    st = ajo_round_status(g, today_d)
+                    if not st or st["days_left"] is None or st["days_left"] > 7 or not st["unpaid"]:
+                        continue
+                    n, d = len(st["unpaid"]), st["days_left"]
+                    items.append({
+                        "urgent": d <= 3, "icon": ft.Icons.GROUPS_ROUNDED, "color": MONEY_RED if d <= 0 else "#FFB74D",
+                        "text": f"Ajo “{st['name']}”: {due_phrase(d).lower()}. {n} member{'s' if n != 1 else ''} yet to pay.",
+                        "page": "Ajo Groups",
+                    })
+            except Exception:
+                pass
+            try:
+                budgets = await load_budgets()
+                if budgets:
+                    if transactions is None:
+                        transactions = await load_transactions()
+                    by_cat = month_stats(transactions, today_d.year, today_d.month)["by_cat"]
+                    for cat, limit in budgets.items():
+                        try:
+                            limit = float(limit)
+                        except (TypeError, ValueError):
+                            continue
+                        if limit <= 0:
+                            continue
+                        used = by_cat.get(cat, 0.0)
+                        pct = used / limit * 100.0
+                        if pct >= 100:
+                            items.append({"urgent": True, "icon": ft.Icons.WARNING_ROUNDED, "color": MONEY_RED,
+                                          "text": f"{cat} budget is used up ({fmt_money(used, 0)} of {fmt_money(limit, 0)}).",
+                                          "page": "Money Tracker"})
+                        elif pct >= 80:
+                            items.append({"urgent": False, "icon": ft.Icons.WARNING_ROUNDED, "color": "#FFB74D",
+                                          "text": f"{cat} budget is {pct:.0f}% used.", "page": "Money Tracker"})
+            except Exception:
+                pass
+            try:
+                for g in await load_goals():
+                    saved, target, _pct = goal_numbers(g)
+                    if target <= 0 or saved >= target or not g.get("deadline"):
+                        continue
+                    days = (datetime.date.fromisoformat(g["deadline"]) - today_d).days
+                    if 0 <= days <= 14:
+                        items.append({"urgent": days <= 3, "icon": ft.Icons.FLAG_ROUNDED, "color": "#FFB74D",
+                                      "text": f"Goal “{g.get('name', '')}”: {due_phrase(days).lower()}, {fmt_money(target - saved, 0)} to go.",
+                                      "page": "Home"})
+            except Exception:
+                pass
+            return items
+
+        async def maybe_show_reminders_popup():
+            """Once a day, when the app is opened, list anything urgent."""
+            try:
+                if lock_state["locked"] or build_gen["n"] != my_gen:
+                    return
+                today_s = datetime.date.today().isoformat()
+                if await prefs.get("reminders_shown_on") == today_s:
+                    return
+                urgent = [r for r in await compute_reminders() if r["urgent"]]
+                if not urgent:
+                    return
+                await prefs.set("reminders_shown_on", today_s)
+                page.show_dialog(ft.AlertDialog(
+                    scrollable=True, modal=True, bgcolor="#FFFFFF",
+                    title=ft.Text("Reminders", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                    content=ft.Container(
+                        content=ft.Column(
+                            [ft.Row([ft.Icon(r["icon"], color="#C62828", size=18),
+                                     ft.Text(r["text"], color=DARK_TEXT, size=13, expand=True)],
+                                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.START) for r in urgent[:6]],
+                            tight=True, spacing=12,
+                        ),
+                        width=300,
+                    ),
+                    actions=[ft.TextButton("OK", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT))],
+                    actions_alignment=ft.MainAxisAlignment.END,
+                ))
+                page.update()
+            except Exception:
+                pass
+
+        # -------------------- HOME PAGE --------------------
+        home_body = ft.Column([], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
+
+        def home_card(controls, border_color=None, on_click=None):
+            side = ft.BorderSide(2, border_color) if border_color else None
+            return ft.Container(
+                content=ft.Column(controls, spacing=8, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+                padding=15, border_radius=15, bgcolor=CARD_BG,
+                border=ft.Border(side, side, side, side) if side else None,
+                on_click=on_click, ink=on_click is not None,
+            )
+
+        def card_title(icon, text, color="#FFD54F", trailing=None):
+            items = [ft.Icon(icon, color=color, size=18),
+                     ft.Text(text, color="white", weight=ft.FontWeight.BOLD, size=14, expand=True)]
+            if trailing is not None:
+                items.append(trailing)
+            return ft.Row(items, spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        def stat_tile(label, value, color):
+            return ft.Container(
+                content=ft.Column(
+                    [ft.Text(label, size=11, color=SOFT_TEXT),
+                     ft.Text(value, size=15, weight=ft.FontWeight.BOLD, color=color, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)],
+                    spacing=2, tight=True,
+                ),
+                padding=10, border_radius=10, expand=True,
+                bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.WHITE),
+            )
+
+        def tool_tile(i):
+            return ft.Container(
+                content=ft.Column(
+                    [ft.Icon(tab_icons[i], size=28, color=tab_icon_colors[i]),
+                     ft.Text(tab_labels[i], size=12, weight=ft.FontWeight.BOLD, color="white", text_align=ft.TextAlign.CENTER)],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=6, tight=True,
+                ),
+                padding=14, border_radius=14, bgcolor=CARD_BG, expand=True,
+                alignment=ft.Alignment(0, 0), on_click=select_tab(i), ink=True,
+            )
+
+        def link_button(text, handler):
+            return ft.TextButton(content=ft.Text(text, color="#FFD54F", weight=ft.FontWeight.BOLD, size=12), on_click=handler)
+
+        async def refresh_home_ui():
+            today_d = datetime.date.today()
+            cards = []
+            try:
+                transactions = await load_transactions()
+            except Exception:
+                transactions = []
+            this = month_stats(transactions, today_d.year, today_d.month)
+            profile_name = profile_names_state.get(str(active_profile_state["value"]), f"Profile {active_profile_state['value']}")
+
+            async def open_money(e):
+                await go_to_page("Money Tracker")
+
+            async def open_ajo_page(e):
+                await go_to_page("Ajo Groups")
+
+            # ---- reminders (only when there is something to say)
+            reminders = await compute_reminders(transactions)
+            if reminders:
+                def reminder_row(r):
+                    async def open_it(e):
+                        if r["page"] != "Home":
+                            await go_to_page(r["page"])
+                    return ft.Container(
+                        content=ft.Row([ft.Icon(r["icon"], color=r["color"], size=18),
+                                        ft.Text(r["text"], color="white", size=12, expand=True)],
+                                       spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
+                        on_click=open_it, ink=True, border_radius=8, padding=ft.Padding(left=2, right=2, top=4, bottom=4),
+                    )
+                cards.append(home_card(
+                    [card_title(ft.Icons.NOTIFICATIONS_ACTIVE_ROUNDED, "Reminders", color="#FFB74D")] + [reminder_row(r) for r in reminders[:5]],
+                    border_color="#FF8C00",
+                ))
+
+            # ---- this month
+            month_rows = [
+                card_title(ft.Icons.CALENDAR_MONTH_ROUNDED, today_d.strftime("%B %Y"),
+                           trailing=ft.Text(profile_name, color="#FFD54F", size=11, weight=ft.FontWeight.BOLD)),
+                ft.Text("Balance this month", color=SOFT_TEXT, size=11),
+                ft.Text(fmt_money(this["net"]), size=28, weight=ft.FontWeight.BOLD,
+                        color=MONEY_GREEN if this["net"] >= 0 else MONEY_RED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Row([stat_tile("Money in", fmt_money(this["income"], 0), MONEY_GREEN),
+                        stat_tile("Money out", fmt_money(this["spent"], 0), MONEY_RED)], spacing=8),
+            ]
+            if this["count"] == 0:
+                month_rows.append(ft.Text("Nothing recorded this month yet. Add your first income or expense.", color=SOFT_TEXT, size=12))
+            else:
+                p_year, p_month = prev_month(today_d.year, today_d.month)
+                last_by_now = month_stats(transactions, p_year, p_month, up_to_day=today_d.day)["spent"]
+                if last_by_now > 0:
+                    diff = (this["spent"] - last_by_now) / last_by_now * 100.0
+                    last_name = datetime.date(p_year, p_month, 1).strftime("%B")
+                    if abs(diff) < 1:
+                        month_rows.append(ft.Text(f"Spending is about the same as this point in {last_name}.", color=SOFT_TEXT, size=12))
+                    else:
+                        month_rows.append(ft.Text(
+                            f"You have spent {abs(diff):.0f}% {'less' if diff < 0 else 'more'} than at this point in {last_name}.",
+                            color=MONEY_GREEN if diff < 0 else MONEY_RED, size=12, weight=ft.FontWeight.BOLD))
+            month_rows.append(ft.ElevatedButton(
+                content=ft.Row([ft.Icon(ft.Icons.ADD_ROUNDED, color="white", size=18),
+                                ft.Text("Add income or expense", color="white", weight=ft.FontWeight.BOLD)],
+                               spacing=6, tight=True, alignment=ft.MainAxisAlignment.CENTER),
+                on_click=open_money, style=ft.ButtonStyle(bgcolor="#2E8B57"),
+            ))
+            cards.append(home_card(month_rows, border_color="#FFD700"))
+
+            # ---- the four tools
+            cards.append(ft.Row([tool_tile(1), tool_tile(2)], spacing=10))
+            cards.append(ft.Row([tool_tile(3), tool_tile(4)], spacing=10))
+
+            # ---- budget left
+            try:
+                budgets = {c: float(v) for c, v in (await load_budgets()).items() if float(v) > 0}
+            except Exception:
+                budgets = {}
+            if budgets:
+                total_limit = sum(budgets.values())
+                total_used = sum(this["by_cat"].get(c, 0.0) for c in budgets)
+                left = total_limit - total_used
+                pct = total_used / total_limit * 100.0
+                bar_color = "#C62828" if pct >= 100 else ("#FF8C00" if pct >= 80 else "#2E8B57")
+                cards.append(home_card(
+                    [
+                        card_title(ft.Icons.SAVINGS_ROUNDED, "Budget this month"),
+                        ft.Text(f"{fmt_money(left, 0)} left" if left >= 0 else f"Over by {fmt_money(-left, 0)}",
+                                size=20, weight=ft.FontWeight.BOLD, color=MONEY_GREEN if left >= 0 else MONEY_RED),
+                        ui_progress_bar(pct, bar_color),
+                        ft.Text(f"{fmt_money(total_used, 0)} used of {fmt_money(total_limit, 0)} across "
+                                f"{len(budgets)} budget{'s' if len(budgets) != 1 else ''}", color=SOFT_TEXT, size=12),
+                    ],
+                    on_click=open_money,
+                ))
+            else:
+                cards.append(home_card([
+                    card_title(ft.Icons.SAVINGS_ROUNDED, "Budget this month",
+                               trailing=link_button("Set a budget", lambda e: open_budget_dialog())),
+                    ft.Text("Set a monthly limit for a category (e.g. Food) and see how much is left here.", color=SOFT_TEXT, size=12),
+                ]))
+
+            # ---- Ajo: the round that is due soonest
+            try:
+                groups = await load_ajo_groups()
+            except Exception:
+                groups = []
+            running = []
+            for g in groups:
+                st = ajo_round_status(g, today_d)
+                if st:
+                    running.append((g, st))
+            running.sort(key=lambda x: (x[1]["days_left"] is None, x[1]["days_left"] or 0))
+            if running:
+                g, st = running[0]
+
+                async def open_this_group(e, gid=g["id"]):
+                    await save_active_ajo_id(gid)
+                    await refresh_ajo_ui()
+                    await go_to_page("Ajo Groups")
+
+                d = st["days_left"]
+                ajo_rows = [
+                    card_title(ft.Icons.GROUPS_ROUNDED, st["name"], color="#CE93D8",
+                               trailing=ft.Text(f"Round {st['round']} of {st['rounds']}", color="#FFD54F", size=11, weight=ft.FontWeight.BOLD)),
+                    ft.Text(f"{st['collector']} collects {fmt_money(st['full_pot'], 0)}", color="white", size=15, weight=ft.FontWeight.BOLD),
+                ]
+                if st["due"]:
+                    ajo_rows.append(ft.Text(
+                        f"Due {st['due'].strftime('%d %b').lstrip('0')} · {due_phrase(d)}", size=13, weight=ft.FontWeight.BOLD,
+                        color=MONEY_RED if d <= 0 else ("#FFB74D" if d <= 7 else MONEY_GREEN)))
+                total_members = len(st["paid"]) + len(st["unpaid"])
+                ajo_rows.append(ui_progress_bar(len(st["paid"]) / total_members * 100.0 if total_members else 0, "#8E24AA"))
+                ajo_rows.append(ft.Text(f"{len(st['paid'])} of {total_members} members have paid", color=SOFT_TEXT, size=12))
+                if len(running) > 1:
+                    ajo_rows.append(ft.Text(f"+ {len(running) - 1} more group{'s' if len(running) != 2 else ''} running", color=SOFT_TEXT, size=11))
+                cards.append(home_card(ajo_rows, on_click=open_this_group))
+            else:
+                cards.append(home_card([
+                    card_title(ft.Icons.GROUPS_ROUNDED, "Ajo Groups", color="#CE93D8",
+                               trailing=link_button("Open", open_ajo_page)),
+                    ft.Text("No round is running. Start a group or set its order to see the next due date here."
+                            if groups else "You're not in any Ajo group yet. Create one or import a shared group.",
+                            color=SOFT_TEXT, size=12),
+                ]))
+
+            # ---- savings goals
+            goals = await load_goals()
+            goal_rows = [card_title(ft.Icons.FLAG_ROUNDED, "Savings goals", color=MONEY_GREEN,
+                                    trailing=link_button("+ Add goal", lambda e: open_goal_dialog()))]
+            if not goals:
+                goal_rows.append(ft.Text("Set a goal like “₦500,000 for rent by March” and track how close you are.",
+                                         color=SOFT_TEXT, size=12))
+            for goal in goals:
+                saved, target, pct = goal_numbers(goal)
+                hint, hint_color = goal_hint(goal, today_d)
+                goal_rows.append(ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Row([ft.Text(goal.get("name", "Goal"), color="white", size=13, weight=ft.FontWeight.BOLD, expand=True,
+                                            max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                    ft.Text(f"{min(pct, 999):.0f}%", color="#FFD54F", size=13, weight=ft.FontWeight.BOLD)], spacing=8),
+                            ui_progress_bar(pct, "#2E8B57" if pct < 100 else "#FFD54F"),
+                            ft.Text(f"{fmt_money(saved, 0)} of {fmt_money(target, 0)}", color="white", size=12),
+                            ft.Text(hint, color=hint_color, size=11),
+                        ],
+                        spacing=4, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    ),
+                    padding=10, border_radius=10, bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.WHITE),
+                    on_click=lambda e, g=goal: open_goal_money_dialog(g), ink=True,
+                ))
+            if goals:
+                goal_rows.append(ft.Text("Tap a goal to add money, edit or delete it.", color=SOFT_TEXT, size=11, italic=True))
+            cards.append(home_card(goal_rows))
+
+            home_body.controls = cards
+
+        home_tab_content = ft.Column(
+            controls=[home_body],
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+            spacing=10,
+        )
+
+        # -------------------- REPEATING ENTRIES: manage --------------------
+        async def manage_recurring_dialog(e):
+            rules = await load_recurring()
+            list_col = ft.Column([], spacing=6, tight=True)
+            rec_type_row, rec_type_state = build_type_toggle("expense", on_white=True)
+            rec_category_picker, rec_category_state = build_category_picker("Housing" if "Housing" in CATEGORY_OPTIONS else "Other")
+            amount_field = dlg_field(hint_text="e.g. 150000", keyboard_type=ft.KeyboardType.NUMBER, max_length=15)
+            amount_field.on_change = with_length_warning(amount_field, 15)
+            note_field = dlg_field(hint_text="e.g. Rent", max_length=40, capitalization=ft.TextCapitalization.WORDS)
+            note_field.on_change = with_length_warning(note_field, 40)
+            day_field = dlg_field(value=str(datetime.date.today().day), hint_text="1 to 31",
+                                  keyboard_type=ft.KeyboardType.NUMBER, max_length=2)
+            error_text = ft.Text("", color="red", size=12)
+            info_text = ft.Text("", color="#2E8B57", size=12, weight=ft.FontWeight.BOLD)
+
+            def first_date_for(day):
+                today_d = datetime.date.today()
+                this_due = datetime.date(today_d.year, today_d.month, min(day, calendar.monthrange(today_d.year, today_d.month)[1]))
+                if this_due >= today_d:
+                    return this_due
+                y, m = (today_d.year, today_d.month + 1) if today_d.month < 12 else (today_d.year + 1, 1)
+                return datetime.date(y, m, min(day, calendar.monthrange(y, m)[1]))
+
+            def make_delete(rule_id):
+                async def _delete(ev):
+                    rules[:] = [r for r in rules if r.get("id") != rule_id]
+                    await save_recurring(rules)
+                    rebuild()
+                    page.update()
+                return _delete
+
+            def rebuild():
+                rows = []
+                for r in rules:
+                    try:
+                        amount = float(r.get("amount", 0) or 0)
+                        day = int(r.get("day", 1))
+                    except (TypeError, ValueError):
+                        amount, day = 0.0, 1
+                    is_income = r.get("type") == "income"
+                    rows.append(ft.Row(
+                        [
+                            ft.Icon(category_icon(r.get("category", "Other")), color=PURPLE_TEXT, size=18),
+                            ft.Column(
+                                [ft.Text((r.get("note") or r.get("category") or "Entry"), color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=13,
+                                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                                 ft.Text(f"{'+' if is_income else '-'}{fmt_money(amount, 0)} · day {day} of every month",
+                                         color="#2E8B57" if is_income else "#C62828", size=11)],
+                                spacing=0, tight=True, expand=True,
+                            ),
+                            ft.IconButton(icon=ft.Icons.DELETE_OUTLINE_ROUNDED, icon_color="#C62828", icon_size=18,
+                                          on_click=make_delete(r.get("id")), tooltip="Stop repeating"),
+                        ],
+                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ))
+                list_col.controls = rows or [ft.Text("Nothing repeats yet.", color="#666666", size=12, italic=True)]
+
+            async def add_rule(ev):
+                try:
+                    amount = to_number(amount_field.value, required=True)
+                except (ValueError, TypeError):
+                    amount = 0.0
+                try:
+                    day = int((day_field.value or "").strip())
+                except ValueError:
+                    day = 0
+                if amount <= 0:
+                    error_text.value = "Enter the amount."
+                elif not 1 <= day <= 31:
+                    error_text.value = "Day must be a number from 1 to 31."
+                elif len(rules) >= 20:
+                    error_text.value = "You can keep up to 20 repeating entries."
+                else:
+                    error_text.value = ""
+                if error_text.value:
+                    info_text.value = ""
+                    page.update()
+                    return
+                first = first_date_for(day)
+                # "last_added" is the month before the first one, so the first entry lands on `first`.
+                ly, lm = prev_month(first.year, first.month)
+                rules.append({
+                    "id": new_ajo_id(), "type": rec_type_state["value"] or "expense",
+                    "category": rec_category_state["value"] or "Other", "amount": amount,
+                    "note": (note_field.value or "").strip(), "day": day, "last_added": f"{ly:04d}-{lm:02d}",
+                })
+                await save_recurring(rules)
+                amount_field.value = ""
+                note_field.value = ""
+                rebuild()
+                added_now = 0
+                try:
+                    added_now = await apply_recurring_all()  # due today? add it straight away
+                    rules[:] = await load_recurring()
+                    rebuild()
+                except Exception:
+                    pass
+                if added_now:
+                    current_view_date["year"], current_view_date["month"] = datetime.date.today().year, datetime.date.today().month
+                    await refresh_money_ui()
+                info_text.value = ("Saved, and added to Money Tracker today. It will repeat every month." if added_now
+                                   else f"Saved. The first one will be added on {first.strftime('%d %b %Y').lstrip('0')}.")
+                page.update()
+
+            rebuild()
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text("Repeating Entries", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text("For things that happen every month, like rent, salary or a subscription. "
+                                    "The app adds them to this profile's Money Tracker by itself on the day you choose.",
+                                    color=DARK_TEXT, size=12),
+                            list_col,
+                            ft.Divider(height=1, color="#DDDDDD"),
+                            ft.Text("Add a repeating entry", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=13),
+                            field_with_caption("Type", rec_type_row, on_white=True),
+                            field_with_caption("Category", rec_category_picker, on_white=True),
+                            field_with_caption("Amount (₦)", amount_field, on_white=True),
+                            field_with_caption("Name / note (optional)", note_field, on_white=True),
+                            field_with_caption("Day of the month (1 to 31)", day_field, on_white=True),
+                            ft.Text("If a month is shorter (e.g. day 31 in February), it is added on the last day.",
+                                    color="#666666", size=11),
+                            error_text,
+                            info_text,
+                        ],
+                        tight=True, spacing=12,
+                    ),
+                    width=300,
+                ),
+                actions=[
+                    ft.TextButton("Done", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                    ft.ElevatedButton("Save Entry", on_click=add_rule, style=ft.ButtonStyle(bgcolor="#2E8B57", color="white")),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        # -------------------- SHARE AS A PICTURE --------------------
+        share_service = ft.Share()
+        page.services.append(share_service)
+
+        def brand_header(subtitle):
+            return ft.Row(
+                [
+                    ft.Image(src="background.png", width=38, height=38, fit=ft.BoxFit.COVER, border_radius=10),
+                    ft.Column([ft.Text("Naira Finance Hub", color="white", size=14, weight=ft.FontWeight.BOLD),
+                               ft.Text(subtitle, color="#FFD54F", size=11, weight=ft.FontWeight.BOLD)], spacing=0, tight=True),
+                ],
+                spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
+        def share_card_shell(children):
+            return ft.Container(
+                content=ft.Column(children, spacing=10, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+                width=300, padding=18,
+                gradient=ft.LinearGradient(begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1), colors=["#6A1BB0", "#2A0845"]),
+            )
+
+        def share_line(label, value, value_color="white", size=13):
+            return ft.Row([ft.Text(label, color=SOFT_TEXT, size=size), ft.Text(value, color=value_color, size=size, weight=ft.FontWeight.BOLD)],
+                          alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
+        def open_share_card(dialog_title, card, file_stub, share_text="", copy_text=None):
+            """Shows the picture, then shares it (WhatsApp etc.) or saves it to the phone."""
+            shot = ft.Screenshot(content=card)
+            status = ft.Text("", size=12, color=DARK_TEXT, text_align=ft.TextAlign.CENTER)
+            busy = {"value": False}
+
+            async def capture():
+                if busy["value"]:
+                    return None
+                busy["value"] = True
+                try:
+                    return await asyncio.wait_for(shot.capture(pixel_ratio=3), timeout=20)
+                except Exception:
+                    status.value = "Couldn't make the picture. Please try again."
+                    page.update()
+                    return None
+                finally:
+                    busy["value"] = False
+
+            async def save_picture(data):
+                try:
+                    path = await picker_save_file(
+                        dialog_title="Save Picture", file_name=f"{file_stub}.png",
+                        file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["png"], src_bytes=data,
+                    )
+                    status.value = "Picture saved. You can now send it on WhatsApp." if path else "Save cancelled."
+                except Exception:
+                    status.value = "Couldn't save the picture. Please try again."
+                page.update()
+
+            async def on_share(e):
+                data = await capture()
+                if not data:
+                    return
+                external_busy["n"] += 1
+                try:
+                    result = await share_service.share_files(
+                        [ft.ShareFile.from_bytes(bytes(data), mime_type="image/png", name=f"{file_stub}.png")],
+                        text=share_text or None,
+                    )
+                    unavailable = getattr(result, "status", None) == ft.ShareResultStatus.UNAVAILABLE
+                except Exception:
+                    unavailable = True
+                finally:
+                    external_busy["n"] -= 1
+                    external_busy["until"] = time.time() + 5
+                if unavailable:
+                    await save_picture(data)  # no share sheet on this device: save the picture instead
+
+            async def on_save(e):
+                data = await capture()
+                if data:
+                    await save_picture(data)
+
+            async def on_copy(e):
+                try:
+                    await page.clipboard.set(copy_text)
+                    status.value = "Text copied. Paste it in WhatsApp, email, etc."
+                except Exception:
+                    status.value = "Could not copy automatically."
+                page.update()
+
+            actions = [ft.TextButton("Close", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT))]
+            if copy_text:
+                actions.append(ft.TextButton("Copy text", on_click=on_copy, style=ft.ButtonStyle(color=PURPLE_TEXT)))
+            actions.append(ft.TextButton("Save", on_click=on_save, style=ft.ButtonStyle(color=PURPLE_TEXT)))
+            actions.append(ft.ElevatedButton(
+                content=ft.Row([ft.Icon(ft.Icons.IOS_SHARE_ROUNDED, color="white", size=16),
+                                ft.Text("Share", color="white", weight=ft.FontWeight.BOLD)], spacing=6, tight=True),
+                on_click=on_share, style=ft.ButtonStyle(bgcolor="#2E8B57")))
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                inset_padding=ft.Padding(left=16, right=16, top=24, bottom=24),
+                content_padding=ft.Padding(left=12, right=12, top=12, bottom=0),
+                title=ft.Text(dialog_title, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column([shot, status], tight=True, spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    width=300,
+                ),
+                actions=actions,
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        def share_ajo_round(group):
+            st = ajo_round_status(group)
+            if not st:
+                snack("This group has no running round to share yet.")
+                return
+
+            def names_block(title, names, color, icon):
+                rows = [ft.Text(f"{title} ({len(names)})", color=color, size=12, weight=ft.FontWeight.BOLD)]
+                rows += [ft.Row([ft.Icon(icon, color=color, size=14), ft.Text(n, color="white", size=13, expand=True)], spacing=6)
+                         for n in names]
+                if not names:
+                    rows.append(ft.Text("None", color=SOFT_TEXT, size=12, italic=True))
+                return ft.Column(rows, spacing=3, tight=True)
+
+            children = [
+                brand_header("Ajo update"),
+                ft.Text(st["name"], color="white", size=20, weight=ft.FontWeight.BOLD),
+                ft.Text(f"Round {st['round']} of {st['rounds']}" + (f" · {st['month_label']}" if st["month_label"] else ""),
+                        color="#FFD54F", size=12, weight=ft.FontWeight.BOLD),
+                ft.Container(
+                    content=ft.Column(
+                        [ft.Row([ft.Icon(ft.Icons.EMOJI_EVENTS_ROUNDED, color="#FFD54F", size=18),
+                                 ft.Text(f"{st['collector']} collects", color="white", size=14, weight=ft.FontWeight.BOLD, expand=True)], spacing=6),
+                         ft.Text(fmt_money(st["full_pot"], 0), color="#FFD54F", size=26, weight=ft.FontWeight.BOLD),
+                         ft.Text(f"{fmt_money(st['contribution'], 0)} each · {fmt_money(st['pot'], 0)} in so far", color=SOFT_TEXT, size=11)],
+                        spacing=2, tight=True,
+                    ),
+                    padding=12, border_radius=12, bgcolor=ft.Colors.with_opacity(0.14, ft.Colors.WHITE),
+                ),
+            ]
+            if st["due"]:
+                d = st["days_left"]
+                children.append(ft.Text(f"Due {st['due'].strftime('%d %b %Y').lstrip('0')} · {due_phrase(d)}", size=13, weight=ft.FontWeight.BOLD,
+                                        color=MONEY_RED if d <= 0 else ("#FFB74D" if d <= 7 else MONEY_GREEN)))
+            children.append(names_block("Paid", st["paid"], MONEY_GREEN, ft.Icons.CHECK_CIRCLE_ROUNDED))
+            children.append(names_block("Yet to pay", st["unpaid"], MONEY_RED, ft.Icons.RADIO_BUTTON_UNCHECKED_ROUNDED))
+            children.append(ft.Text(f"As at {datetime.datetime.now().strftime('%d %b %Y, %I:%M %p').lstrip('0')} · from the Naira Finance Hub app",
+                                    color=SOFT_TEXT, size=10))
+            open_share_card(
+                "Share This Round", share_card_shell(children), f"Ajo_{safe_filename(st['name'])}_Round_{st['round']}",
+                share_text=f"{st['name']} · Round {st['round']} of {st['rounds']}: {len(st['paid'])} paid, {len(st['unpaid'])} yet to pay.",
+            )
+
+        def share_payslip(result, copy_text):
+            children = [
+                brand_header("Payslip estimate"),
+                share_line("Basic salary", fmt_money(result["basic"])),
+                share_line("Housing allowance", fmt_money(result["housing"])),
+                share_line("Transport allowance", fmt_money(result["transport"])),
+                share_line("Other allowances", fmt_money(result["other"])),
+                ft.Divider(height=1, color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+                share_line("Gross pay (monthly)", fmt_money(result["gross_monthly"]), MONEY_GREEN),
+                share_line("Pension (8%)", f"-{fmt_money(result['pension_monthly'])}", MONEY_RED),
+                share_line("NHF (2.5%)", f"-{fmt_money(result['nhf_monthly'])}", MONEY_RED),
+                share_line("PAYE tax", f"-{fmt_money(result['paye_monthly'])}", MONEY_RED),
+                ft.Container(
+                    content=ft.Column([ft.Text("Net pay (monthly)", color=SOFT_TEXT, size=12),
+                                       ft.Text(fmt_money(result["net_monthly"]), color="#FFD54F", size=26, weight=ft.FontWeight.BOLD)],
+                                      spacing=2, tight=True),
+                    padding=12, border_radius=12, bgcolor=ft.Colors.with_opacity(0.14, ft.Colors.WHITE),
+                ),
+                ft.Text("Estimate for guidance only, using the Nigeria Tax Act 2025 bands. Not an official payslip. "
+                        "Made with the Naira Finance Hub app.", color=SOFT_TEXT, size=10),
+            ]
+            open_share_card("Share Payslip", share_card_shell(children), "Payslip_Estimate",
+                            share_text="My payslip estimate from Naira Finance Hub", copy_text=copy_text)
+
+        # -------------------- APP LOCK (PIN) --------------------
+        # Keeps other people who pick up the phone out of the app. The PIN is never stored itself,
+        # only a scrambled check value; the data is not encrypted.
+        pin_state = {
+            "hash": await load_saved("app_pin_hash", ""),
+            "salt": await load_saved("app_pin_salt", ""),
+            "recovery": await load_saved("app_pin_recovery", ""),
+        }
+        lock_state = {"locked": bool(pin_state["hash"]), "entered": "", "fails": 0, "blocked_until": 0.0, "hidden_at": None}
+        LOCK_PROMPT = "Enter your PIN"
+        lock_message = ft.Text(LOCK_PROMPT, color="white", size=16, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+        lock_dots = ft.Row(
+            [ft.Container(width=16, height=16, border_radius=8, bgcolor=ft.Colors.with_opacity(0.25, ft.Colors.WHITE)) for _ in range(4)],
+            alignment=ft.MainAxisAlignment.CENTER, spacing=16,
+        )
+
+        def paint_lock_dots():
+            filled = len(lock_state["entered"])
+            for i, dot in enumerate(lock_dots.controls):
+                dot.bgcolor = "#FFD54F" if i < filled else ft.Colors.with_opacity(0.25, ft.Colors.WHITE)
+
+        async def save_pin(pin, recovery_word):
+            salt = os.urandom(8).hex()
+            pin_state.update({"salt": salt, "hash": hash_secret(pin, salt),
+                              "recovery": hash_secret(recovery_word.strip().lower(), salt)})
+            for key in ("hash", "salt", "recovery"):
+                await prefs.set(f"app_pin_{key}", pin_state[key])
+
+        async def clear_pin():
+            for key in ("hash", "salt", "recovery"):
+                pin_state[key] = ""
+                await prefs.set(f"app_pin_{key}", "")
+
+        async def unlock_app():
+            lock_state.update({"locked": False, "entered": "", "fails": 0})
+            paint_lock_dots()
+            lock_message.value = LOCK_PROMPT
+            lock_overlay.visible = False
+            page.update()
+            await maybe_show_reminders_popup()
+
+        def lock_app():
+            if not pin_state["hash"] or lock_state["locked"]:
+                return
+            lock_state.update({"locked": True, "entered": ""})
+            paint_lock_dots()
+            lock_message.value = LOCK_PROMPT
+            lock_overlay.visible = True
+            for _ in range(6):  # close any pop-up so nothing sits on top of the lock screen
+                try:
+                    if page.pop_dialog() is None:
+                        break
+                except Exception:
+                    break
+            page.update()
+
+        def make_lock_key(key):
+            async def press(e):
+                if not lock_state["locked"]:
+                    return
+                wait = lock_state["blocked_until"] - time.time()
+                if wait > 0:
+                    lock_message.value = f"Too many wrong tries. Wait {int(wait) + 1} seconds."
+                    _refresh(lock_message)
+                    return
+                if key == "back":
+                    lock_state["entered"] = lock_state["entered"][:-1]
+                elif len(lock_state["entered"]) < 4:
+                    lock_state["entered"] += key
+                    lock_message.value = LOCK_PROMPT
+                if len(lock_state["entered"]) == 4:
+                    if hash_secret(lock_state["entered"], pin_state["salt"]) == pin_state["hash"]:
+                        await unlock_app()
+                        return
+                    lock_state["entered"] = ""
+                    lock_state["fails"] += 1
+                    if lock_state["fails"] >= 5:
+                        lock_state["fails"] = 0
+                        lock_state["blocked_until"] = time.time() + 30
+                        lock_message.value = "Too many wrong tries. Wait 30 seconds."
+                    else:
+                        lock_message.value = "Wrong PIN. Try again."
+                paint_lock_dots()
+                _refresh(lock_message, lock_dots)
+            return press
+
+        def open_forgot_pin(e):
+            word_field = dlg_field(hint_text="Your recovery word", max_length=30, password=True, can_reveal_password=True)
+            error_text = ft.Text("", color="red", size=12)
+
+            async def check_word(ev):
+                word = (word_field.value or "").strip().lower()
+                if word and pin_state["recovery"] and hash_secret(word, pin_state["salt"]) == pin_state["recovery"]:
+                    await clear_pin()
+                    page.pop_dialog()
+                    await unlock_app()
+                    snack("PIN removed. You can set a new one in Menu → Settings.", color="#2E8B57", seconds=4)
+                else:
+                    error_text.value = "That is not the recovery word you saved."
+                    page.update()
+
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text("Forgot your PIN?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text("Type the recovery word you chose when you set the PIN.", color=DARK_TEXT, size=13),
+                            word_field,
+                            error_text,
+                            ft.Text("Forgot that too? The only way in is to clear this app's storage in your phone's Settings "
+                                    "(this deletes the app's data) and then use Restore Data with your backup file.",
+                                    color="#666666", size=11),
+                        ],
+                        tight=True, spacing=10,
+                    ),
+                    width=300,
+                ),
+                actions=[
+                    ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                    ft.ElevatedButton("Remove PIN", on_click=check_word, style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        def lock_key_button(key):
+            if key == "forgot":
+                return ft.Container(content=ft.Text("Forgot?", color="#FFD54F", size=13, weight=ft.FontWeight.BOLD),
+                                    width=68, height=68, alignment=ft.Alignment(0, 0), border_radius=34,
+                                    on_click=open_forgot_pin, ink=True)
+            if key == "back":
+                content = ft.Icon(ft.Icons.BACKSPACE_OUTLINED, color="white", size=24)
+                bg = None
+            else:
+                content = ft.Text(key, color="white", size=26, weight=ft.FontWeight.BOLD)
+                bg = ft.Colors.with_opacity(0.14, ft.Colors.WHITE)
+            return ft.Container(content=content, width=68, height=68, alignment=ft.Alignment(0, 0), border_radius=34,
+                                bgcolor=bg, on_click=make_lock_key(key), ink=True)
+
+        lock_overlay = ft.Container(
+            visible=lock_state["locked"],
+            left=0, top=0, right=0, bottom=0,
+            bgcolor="#2A0845",
+            alignment=ft.Alignment(0, 0),
+            content=ft.Column(
+                [
+                    ft.Image(src="background.png", width=76, height=76, fit=ft.BoxFit.COVER, border_radius=18),
+                    ft.Text("Naira Finance Hub", color="white", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Container(height=4),
+                    lock_message,
+                    lock_dots,
+                    ft.Container(height=4),
+                ] + [
+                    ft.Row([lock_key_button(k) for k in row], alignment=ft.MainAxisAlignment.CENTER, spacing=22)
+                    for row in (("1", "2", "3"), ("4", "5", "6"), ("7", "8", "9"), ("forgot", "0", "back"))
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER,
+                spacing=14, tight=True,
+            ),
+        )
+
+        def open_set_pin_dialog():
+            def pin_field(hint):
+                return dlg_field(hint_text=hint, keyboard_type=ft.KeyboardType.NUMBER, max_length=4, password=True,
+                                 can_reveal_password=True, input_filter=ft.NumbersOnlyInputFilter())
+            pin1, pin2 = pin_field("4 digits"), pin_field("Type it again")
+            word_field = dlg_field(hint_text="e.g. your first school", max_length=30)
+            error_text = ft.Text("", color="red", size=12)
+
+            async def save_new_pin(ev):
+                a, b = (pin1.value or "").strip(), (pin2.value or "").strip()
+                word = (word_field.value or "").strip()
+                if len(a) != 4 or not a.isdigit():
+                    error_text.value = "The PIN must be exactly 4 digits."
+                elif a != b:
+                    error_text.value = "The two PINs don't match."
+                elif len(word) < 3:
+                    error_text.value = "Choose a recovery word of at least 3 letters."
+                else:
+                    error_text.value = ""
+                if error_text.value:
+                    page.update()
+                    return
+                await save_pin(a, word)
+                page.pop_dialog()
+                snack("App lock is on. You'll be asked for the PIN when you open the app.", color="#2E8B57", seconds=4)
+
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text("Set App Lock PIN", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text("The app will ask for this PIN each time it is opened, and after it has been in the "
+                                    "background for a minute.", color=DARK_TEXT, size=12),
+                            field_with_caption("New PIN", pin1, on_white=True),
+                            field_with_caption("Confirm PIN", pin2, on_white=True),
+                            field_with_caption("Recovery word (used if you forget the PIN)", word_field, on_white=True),
+                            ft.Text("Pick a word you will remember but others won't guess. Capital letters don't matter.",
+                                    color="#666666", size=11),
+                            error_text,
+                        ],
+                        tight=True, spacing=12,
+                    ),
+                    width=300,
+                ),
+                actions=[
+                    ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                    ft.ElevatedButton("Turn On", on_click=save_new_pin, style=ft.ButtonStyle(bgcolor="#2E8B57", color="white")),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        def open_pin_settings(e):
+            if not pin_state["hash"]:
+                open_set_pin_dialog()
+                return
+            current_field = dlg_field(hint_text="Current PIN", keyboard_type=ft.KeyboardType.NUMBER, max_length=4, password=True,
+                                      can_reveal_password=True, input_filter=ft.NumbersOnlyInputFilter())
+            error_text = ft.Text("", color="red", size=12)
+
+            def pin_ok():
+                if hash_secret((current_field.value or "").strip(), pin_state["salt"]) == pin_state["hash"]:
+                    return True
+                error_text.value = "That PIN is not correct."
+                page.update()
+                return False
+
+            async def turn_off(ev):
+                if pin_ok():
+                    await clear_pin()
+                    page.pop_dialog()
+                    snack("App lock is off.", seconds=3)
+
+            def change_pin(ev):
+                if pin_ok():
+                    page.pop_dialog()
+                    open_set_pin_dialog()
+
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text("App Lock is On", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [ft.Text("Enter your current PIN to turn the lock off or change the PIN.", color=DARK_TEXT, size=13),
+                         current_field, error_text],
+                        tight=True, spacing=10,
+                    ),
+                    width=300,
+                ),
+                actions=[
+                    ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                    ft.TextButton("Turn off", on_click=turn_off, style=ft.ButtonStyle(color="#C62828")),
+                    ft.ElevatedButton("Change PIN", on_click=change_pin, style=ft.ButtonStyle(bgcolor="#2E8B57", color="white")),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
         # -------------------- TABS (manual, animated, icon-enhanced) --------------------
-        tab_labels = ["Housing Upfront", "Salary Management", "Money Tracker", "Ajo Groups"]
-        tab_icons = [ft.Icons.HOME_ROUNDED, ft.Icons.WORK_ROUNDED, ft.Icons.ACCOUNT_BALANCE_WALLET_ROUNDED, ft.Icons.GROUPS_ROUNDED]
-        tab_icon_colors = ["#FF8C00", "#E53935", "#1E88E5", "#8E24AA"]
-        tab_contents = [housing_tab_content, salary_tab_content, money_tab_content, ajo_tab_content]
-        # Reopen on the page you were on last time (e.g. Ajo Groups).
+        tab_contents = [home_tab_content, housing_tab_content, salary_tab_content, money_tab_content, ajo_tab_content]
+        # Reopen on the page you were on last time (e.g. Ajo Groups). The first time after this
+        # update, and for new users, the app opens on Home.
         try:
-            start_tab = int(await prefs.get("last_tab") or 0)
+            saved_page = await prefs.get("last_page")
         except Exception:
-            start_tab = 0
-        if not 0 <= start_tab < len(tab_contents):
-            start_tab = 0
+            saved_page = None
+        start_tab = tab_labels.index(saved_page) if saved_page in tab_labels else 0
         current_tab_index = {"value": start_tab}
 
         tab_content_area = ft.Container(
@@ -5930,6 +7459,12 @@ async def build_ui(page: ft.Page):
                 current_tab_title.controls[0].color = tab_icon_colors[idx]
                 current_tab_title.controls[1].value = tab_labels[idx]
 
+                if tab_labels[idx] == "Home":
+                    try:
+                        await refresh_home_ui()  # fresh numbers every time you come back to Home
+                    except Exception:
+                        pass
+
                 # Only redraw the tab area (not the whole app) so switching pages feels instant.
                 if motion["on"]:
                     tab_content_area.opacity = 0
@@ -5941,10 +7476,15 @@ async def build_ui(page: ft.Page):
                 tab_content_area.scale = 1
                 _refresh(current_tab_title, tab_content_area)
                 try:
-                    await prefs.set("last_tab", str(idx))
+                    await prefs.set("last_page", tab_labels[idx])
                 except Exception:
                     pass
             return handler
+
+        try:
+            await refresh_home_ui()
+        except Exception:
+            home_body.controls = [ft.Text("Home could not load. Use the menu to open a page.", color="white", size=13)]
 
         tab_title_bar = ft.Container(
             content=current_tab_title,
@@ -6022,7 +7562,7 @@ async def build_ui(page: ft.Page):
             initial_galaxy_stars, initial_galaxy_stack = [], None
 
         background_layer = ft.Container(
-            content=initial_galaxy_stack if is_dark_mode else ft.Image(src="background.png", fit=ft.BoxFit.COVER),
+            content=initial_galaxy_stack if is_dark_mode else build_light_background(),
             bgcolor=None,
             left=-TILT_OVERSCAN, top=-TILT_OVERSCAN, right=-TILT_OVERSCAN, bottom=-TILT_OVERSCAN,
             animate_position=ft.Animation(80, ft.AnimationCurve.EASE_OUT),
@@ -6143,6 +7683,7 @@ async def build_ui(page: ft.Page):
                 foreground_layer,
                 hamburger_positioned,
                 ajo_draw_overlay_container,
+                lock_overlay,
             ],
             expand=True,
             opacity=0,
@@ -6172,6 +7713,7 @@ async def build_ui(page: ft.Page):
                     page.update()
                 except Exception:
                     pass
+            await maybe_show_reminders_popup()
             await asyncio.sleep(1.5)
             if build_gen["n"] == my_gen:
                 load_banner_ad()
@@ -6183,7 +7725,16 @@ async def build_ui(page: ft.Page):
             # Runs in the background so the screen is usable the instant you come back,
             # and gives up after 10 s instead of freezing the app if something is stuck.
             try:
+                await asyncio.wait_for(apply_recurring_all(), timeout=5)
+            except Exception:
+                pass
+            try:
                 await asyncio.wait_for(refresh_money_ui(), timeout=10)
+            except Exception:
+                pass
+            try:
+                if tab_labels[current_tab_index["value"]] == "Home":
+                    await asyncio.wait_for(refresh_home_ui(), timeout=5)
             except Exception:
                 pass
             try:
@@ -6200,6 +7751,8 @@ async def build_ui(page: ft.Page):
             state = getattr(e, "state", None)
             if state in (ft.AppLifecycleState.HIDE, ft.AppLifecycleState.PAUSE):
                 app_active["value"] = False
+                if lock_state["hidden_at"] is None:
+                    lock_state["hidden_at"] = time.time()
                 if draw_sound["music_playing"]:
                     draw_sound["resume_after"] = True
                     try:
@@ -6208,6 +7761,10 @@ async def build_ui(page: ft.Page):
                     except Exception:
                         draw_sound["music_playing"] = False
             elif state in (ft.AppLifecycleState.RESUME, ft.AppLifecycleState.SHOW):
+                hidden_at, lock_state["hidden_at"] = lock_state["hidden_at"], None
+                in_chooser = external_busy["n"] > 0 or time.time() < external_busy["until"]
+                if hidden_at is not None and time.time() - hidden_at > 60 and not in_chooser:
+                    lock_app()  # away for over a minute: ask for the PIN again (if one is set)
                 if not app_active["value"]:
                     app_active["value"] = True
                     running = resume_state["task"]
@@ -6227,7 +7784,7 @@ async def build_ui(page: ft.Page):
     page.controls.clear()
     page.add(ft.Container(
         content=ft.Column(
-            [ft.Image(src="logo.png", width=110, height=110, fit=ft.BoxFit.CONTAIN),
+            [ft.Image(src="background.png", width=110, height=110, fit=ft.BoxFit.COVER, border_radius=24),
              ft.Text("Naira Finance Hub", size=20, weight=ft.FontWeight.BOLD, color="white"),
              ft.ProgressRing(width=22, height=22, stroke_width=3, color="#FFD700")],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
