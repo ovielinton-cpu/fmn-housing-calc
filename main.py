@@ -2639,7 +2639,7 @@ async def build_ui(page: ft.Page):
 
         txn_busy = {"value": False}
 
-        def show_undo_snackbar(deleted_entry):
+        def show_undo_snackbar(deleted_entry, original_pos=0):
             undo_state = {"handled": False}
             deleted_from_key = profile_key("money_transactions")  # Undo puts it back in the SAME profile
 
@@ -2652,16 +2652,22 @@ async def build_ui(page: ft.Page):
                     full = json.loads(raw) if raw else []
                 except Exception:
                     full = []
-                full.insert(0, deleted_entry)
+                if deleted_entry in full:
+                    return  # already back (e.g. restored from a backup in the meantime)
+                full.insert(max(0, min(original_pos, len(full))), deleted_entry)
                 await prefs.set(deleted_from_key, json.dumps(full))
                 await refresh_money_ui()
+                page.update()
 
             try:
                 snack = ft.SnackBar(
                     ft.Text("Transaction deleted", color="white"),
-                    action="Undo",
-                    on_action=handle_undo,
-                    duration=ft.Duration(seconds=5),
+                    action=ft.SnackBarAction(label="Undo", text_color="#FFD54F", on_click=handle_undo),
+                    on_action=handle_undo,  # (only one of the two runs: handle_undo ignores a second call)
+                    # Newer Android versions keep a message with a button on screen forever unless told
+                    # otherwise; this makes it go away after 3 seconds like other messages.
+                    persist=False,
+                    duration=ft.Duration(seconds=3),
                     bgcolor=PURPLE_TEXT,
                     behavior=ft.SnackBarBehavior.FLOATING,
                     margin=ft.Margin.only(bottom=300, left=10, right=10),
@@ -3439,7 +3445,7 @@ async def build_ui(page: ft.Page):
                 page.pop_dialog()
                 await refresh_money_ui()
                 if deleted_entry:
-                    show_undo_snackbar(deleted_entry)
+                    show_undo_snackbar(deleted_entry, pos)
 
             edit_dialog = ft.AlertDialog(scrollable=True, 
                 modal=True,
@@ -3782,7 +3788,7 @@ async def build_ui(page: ft.Page):
                         txn_busy["value"] = False
                     page.update()
                     if deleted_entry:
-                        show_undo_snackbar(deleted_entry)
+                        show_undo_snackbar(deleted_entry, pos)
                 return _delete
 
             def make_repeat(source_entry):
@@ -5031,6 +5037,8 @@ async def build_ui(page: ft.Page):
 
                         def make_pick(name):
                             def _pick(e):
+                                if name not in remaining:  # second tap before the list redrew
+                                    return
                                 selected_order.append(name)
                                 remaining.remove(name)
                                 refresh_manual_lists()
@@ -5039,21 +5047,44 @@ async def build_ui(page: ft.Page):
 
                         def make_undo(name):
                             def _undo(e):
+                                if name not in selected_order:
+                                    return
                                 selected_order.remove(name)
                                 remaining.append(name)
+                                # back in its usual place, not at the bottom
+                                remaining.sort(key=lambda m: members.index(m) if m in members else len(members))
                                 refresh_manual_lists()
                                 page.update()
                             return _undo
 
                         def make_delete_remaining(name):
-                            async def _delete(e):
-                                remaining.remove(name)
-                                if name in active_group.get("members", []):
-                                    active_group["members"].remove(name)
-                                    await save_ajo_groups(groups)
-                                refresh_manual_lists()
-                                page.update()
-                            return _delete
+                            def _ask(e):
+                                if name not in remaining:
+                                    return
+
+                                async def _confirm(ev):
+                                    page.pop_dialog()
+                                    if name in remaining:
+                                        remaining.remove(name)
+                                    if name in members:
+                                        members.remove(name)
+                                    if name in active_group.get("members", []):
+                                        active_group["members"].remove(name)
+                                        await save_ajo_groups(groups)
+                                    refresh_manual_lists()
+                                    page.update()
+
+                                page.show_dialog(ft.AlertDialog(
+                                    modal=True, bgcolor="#FFFFFF",
+                                    title=ft.Text(f"Remove {name}?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                                    content=ft.Text(f"{name} will be taken out of this group, not just the order.", color=DARK_TEXT, size=13),
+                                    actions=[
+                                        ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                                        ft.ElevatedButton("Remove", on_click=_confirm, style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
+                                    ],
+                                    actions_alignment=ft.MainAxisAlignment.END,
+                                ))
+                            return _ask
 
                         remaining_display.controls = [
                             ft.Row(
@@ -5532,11 +5563,25 @@ async def build_ui(page: ft.Page):
                             pass
 
                 async def discard_setup(e):
-                    active_group["members"] = []
-                    active_group["contribution_amount"] = 0
-                    active_group.pop("pending_due_date", None)
-                    await save_ajo_groups(groups)
-                    await refresh_ajo_ui()
+                    async def do_discard(ev):
+                        page.pop_dialog()
+                        active_group["members"] = []
+                        active_group["contribution_amount"] = 0
+                        active_group.pop("pending_due_date", None)
+                        await save_ajo_groups(groups)
+                        await refresh_ajo_ui()
+
+                    page.show_dialog(ft.AlertDialog(
+                        modal=True, bgcolor="#FFFFFF",
+                        title=ft.Text("Discard the setup?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                        content=ft.Text("All members, the contribution amount and the due date you entered will be cleared.",
+                                        color=DARK_TEXT, size=13),
+                        actions=[
+                            ft.TextButton("Cancel", on_click=lambda ev: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                            ft.ElevatedButton("Discard", on_click=do_discard, style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
+                        ],
+                        actions_alignment=ft.MainAxisAlignment.END,
+                    ))
 
                 has_something_to_discard = bool(active_group.get("members")) or bool(active_group.get("contribution_amount"))
 
