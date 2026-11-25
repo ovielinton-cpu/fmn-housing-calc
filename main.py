@@ -654,7 +654,7 @@ MONEY_RED = "#FF8A80"     # money out / negative balance
 CAPTION_GOLD = "#FFD54F"  # field captions on the dark cards
 
 
-BACKUP_EXTRA_KEYS = ("ajo_groups", "active_ajo_group_id", "category_changes", "salary_history", "alert_category_rules", "savings_goals")
+BACKUP_EXTRA_KEYS = ("ajo_groups", "active_ajo_group_id", "category_changes", "salary_history", "alert_category_rules", "savings_goals", "month_todos")
 
 PHOTO_STRIPPED_MSG = ("This picture has no data inside. It was probably sent as a photo, which removes the data. "
                       "Ask the sender to send it again on WhatsApp as a Document (📎 → Document).")
@@ -1237,21 +1237,30 @@ async def build_ui(page: ft.Page):
         galaxy_stars_active = {"value": False}
 
         def build_galaxy_background():
+            # A painted Milky Way (stars, nebula clouds and dust lanes) as one picture, which costs a
+            # low-end phone almost nothing. With animations on, a few extra stars twinkle on top.
             stars = []
-            for _ in range(100 if motion["on"] else 45):
-                dot_size = random.choice([2, 3, 3, 4, 4, 5])
-                stars.append(
-                    ft.Container(
-                        width=dot_size, height=dot_size,
-                        border_radius=dot_size,
-                        bgcolor="white",
-                        left=random.randint(5, 340),
-                        top=random.randint(10, 780),
-                        opacity=random.uniform(0.35, 1.0),
-                        animate_opacity=ft.Animation(random.randint(1200, 2400), ft.AnimationCurve.EASE_IN_OUT) if motion["on"] else None,
+            if motion["on"]:
+                for _ in range(36):
+                    dot_size = random.choice([2, 2, 3, 3, 4])
+                    stars.append(
+                        ft.Container(
+                            width=dot_size, height=dot_size,
+                            border_radius=dot_size,
+                            bgcolor=random.choice(["white", "white", "#CFE3FF", "#FFE4C4", "#FFC8E8"]),
+                            left=random.randint(5, 400),
+                            top=random.randint(10, 860),
+                            opacity=random.uniform(0.35, 1.0),
+                            animate_opacity=ft.Animation(random.randint(1200, 2400), ft.AnimationCurve.EASE_IN_OUT),
+                        )
                     )
-                )
-            return stars, ft.Stack(controls=[ft.Container(bgcolor="#0D0D1A", expand=True)] + stars, expand=True)
+            return stars, ft.Stack(
+                controls=[
+                    ft.Container(bgcolor="#07041A", left=0, top=0, right=0, bottom=0),
+                    ft.Image(src="galaxy.jpg", fit=ft.BoxFit.COVER, left=0, top=0, right=0, bottom=0),
+                ] + stars,
+                expand=True,
+            )
 
         async def twinkle_galaxy(stars):
             try:
@@ -3017,6 +3026,15 @@ async def build_ui(page: ft.Page):
                 have = {g.get("id") for g in cur if isinstance(g, dict)}
                 cur.extend(g for g in b_goals if g["id"] not in have)
                 await prefs.set("savings_goals", json.dumps(cur))
+
+            # Month-end to-do items: add the ones this phone doesn't have yet.
+            b_todos = [t for t in parse("month_todos", []) if isinstance(t, dict) and t.get("id")]
+            if b_todos:
+                cur = await get_json("month_todos", [])
+                cur = cur if isinstance(cur, list) else []
+                have = {t.get("id") for t in cur if isinstance(t, dict)}
+                cur.extend(t for t in b_todos if t["id"] not in have)
+                await prefs.set("month_todos", json.dumps(cur))
 
             # Saved salary calculations: only fill in if this phone has none.
             if "salary_history" in extras and not await get_json("salary_history", []):
@@ -6813,6 +6831,19 @@ async def build_ui(page: ft.Page):
                                       "page": "Home"})
             except Exception:
                 pass
+            try:
+                days_to_end = calendar.monthrange(today_d.year, today_d.month)[1] - today_d.day
+                if days_to_end <= 3:
+                    this_key = f"{today_d.year:04d}-{today_d.month:02d}"
+                    open_items = [t for t in await load_todos() if t.get("month") == this_key and not t.get("done")]
+                    if open_items:
+                        n = len(open_items)
+                        items.append({"urgent": False, "icon": ft.Icons.CHECKLIST_ROUNDED, "color": "#4FC3F7",
+                                      "text": f"{n} to-do item{'s' if n != 1 else ''} still open, and the month ends "
+                                              f"{'today' if days_to_end == 0 else f'in {days_to_end} day' + ('s' if days_to_end != 1 else '')}.",
+                                      "page": "Home"})
+            except Exception:
+                pass
             return items
 
         async def maybe_show_reminders_popup():
@@ -6845,6 +6876,170 @@ async def build_ui(page: ft.Page):
                 page.update()
             except Exception:
                 pass
+
+        # -------------------- MONTH-END TO-DO LIST --------------------
+        # A simple checklist of what you plan to do with this month's money (pay rent, send money home,
+        # buy foodstuff...). Each item belongs to a month; unfinished ones can be brought into the next.
+        TODO_KEY = "month_todos"
+        MAX_TODOS = 30
+
+        def month_key(d=None):
+            d = d or datetime.date.today()
+            return f"{d.year:04d}-{d.month:02d}"
+
+        async def load_todos():
+            try:
+                raw = await prefs.get(TODO_KEY)
+                items = json.loads(raw) if raw else []
+                return [t for t in items if isinstance(t, dict) and t.get("id")] if isinstance(items, list) else []
+            except Exception:
+                return []
+
+        async def save_todos(items):
+            # Keep this month and the two before it; older lists are no longer shown anywhere.
+            today_d = datetime.date.today()
+            y, m = today_d.year, today_d.month
+            keep = set()
+            for _ in range(3):
+                keep.add(f"{y:04d}-{m:02d}")
+                y, m = prev_month(y, m)
+            await prefs.set(TODO_KEY, json.dumps([t for t in items if t.get("month") in keep]))
+
+        def todo_amount(t):
+            try:
+                return max(float(t.get("amount", 0) or 0), 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def open_todo_dialog(item=None):
+            editing = item is not None
+            current = item or {}
+            text_field = dlg_field(value=current.get("text", ""), hint_text="e.g. Pay rent", max_length=50,
+                                   capitalization=ft.TextCapitalization.SENTENCES, autofocus=not editing)
+            text_field.on_change = with_length_warning(text_field, 50)
+            amount_val = todo_amount(current)
+            amount_field = dlg_field(value=f"{amount_val:.0f}" if amount_val else "", hint_text="e.g. 50000 (optional)",
+                                     keyboard_type=ft.KeyboardType.NUMBER, max_length=15)
+            amount_field.on_change = with_length_warning(amount_field, 15)
+            error_text = ft.Text("", color="red", size=12)
+            busy = {"v": False}
+
+            async def save_item(e):
+                if busy["v"]:
+                    return
+                text = (text_field.value or "").strip()
+                amount = 0.0
+                if (amount_field.value or "").strip():
+                    try:
+                        amount = to_number(amount_field.value, required=True)
+                    except (ValueError, TypeError):
+                        amount = -1.0
+                if not text:
+                    error_text.value = "Write what you want to do."
+                elif amount < 0:
+                    error_text.value = "Enter the amount as a number, or leave it empty."
+                else:
+                    error_text.value = ""
+                items = await load_todos()
+                this_month = month_key()
+                if not error_text.value and not editing and \
+                        len([t for t in items if t.get("month") == this_month]) >= MAX_TODOS:
+                    error_text.value = f"You can keep up to {MAX_TODOS} items a month. Delete one first."
+                if error_text.value:
+                    page.update()
+                    return
+                busy["v"] = True
+                if editing:
+                    for t in items:
+                        if t.get("id") == current.get("id"):
+                            t.update({"text": text, "amount": amount})
+                else:
+                    items.append({"id": new_ajo_id(), "text": text, "amount": amount, "done": False,
+                                  "month": this_month, "created": datetime.date.today().isoformat()})
+                await save_todos(items)
+                page.pop_dialog()
+                await refresh_home_ui()
+                page.update()
+
+            async def delete_item(e):
+                if busy["v"]:
+                    return
+                busy["v"] = True
+                items = await load_todos()
+                await save_todos([t for t in items if t.get("id") != current.get("id")])
+                page.pop_dialog()
+                await refresh_home_ui()
+                page.update()
+
+            actions = [ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT))]
+            if editing:
+                actions.append(ft.TextButton("Delete", on_click=delete_item, style=ft.ButtonStyle(color="#C62828")))
+            actions.append(ft.ElevatedButton("Save" if editing else "Add", on_click=save_item,
+                                             style=ft.ButtonStyle(bgcolor="#2E8B57", color="white")))
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text("Edit To-Do" if editing else "New To-Do", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Text("What do you want to do with this month's money?", color=DARK_TEXT, size=12),
+                            field_with_caption("To-do", text_field, on_white=True),
+                            field_with_caption("Amount (₦), optional", amount_field, on_white=True),
+                            error_text,
+                        ],
+                        tight=True, spacing=14,
+                    ),
+                    width=300,
+                ),
+                actions=actions,
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        async def toggle_todo(item_id, done):
+            items = await load_todos()
+            for t in items:
+                if t.get("id") == item_id:
+                    t["done"] = bool(done)
+            await save_todos(items)
+            await refresh_home_ui()
+            page.update()
+
+        async def carry_over_todos(e):
+            today_d = datetime.date.today()
+            p_year, p_month = prev_month(today_d.year, today_d.month)
+            last_key, this_key = f"{p_year:04d}-{p_month:02d}", month_key(today_d)
+            items = await load_todos()
+            have = {(t.get("text", "").strip().lower(), todo_amount(t)) for t in items if t.get("month") == this_key}
+            room = MAX_TODOS - len([t for t in items if t.get("month") == this_key])
+            moved = 0
+            for t in [t for t in items if t.get("month") == last_key and not t.get("done")]:
+                if room <= 0:
+                    break
+                sig = (t.get("text", "").strip().lower(), todo_amount(t))
+                if sig in have:
+                    continue
+                items.append({"id": new_ajo_id(), "text": t.get("text", ""), "amount": todo_amount(t), "done": False,
+                              "month": this_key, "created": today_d.isoformat()})
+                have.add(sig)
+                room -= 1
+                moved += 1
+            await save_todos(items)
+            await prefs.set("todo_carried_" + this_key, "1")
+            await refresh_home_ui()
+            page.update()
+            snack(f"Brought over {moved} item{'s' if moved != 1 else ''}." if moved else "Nothing new to bring over.",
+                  color="#2E8B57", seconds=3)
+
+        async def dismiss_carry_over(e):
+            await prefs.set("todo_carried_" + month_key(), "1")
+            await refresh_home_ui()
+            page.update()
+
+        async def toggle_hide_amounts(e):
+            hidden_now = (await prefs.get("hide_amounts")) == "1"
+            await prefs.set("hide_amounts", "0" if hidden_now else "1")
+            await refresh_home_ui()
+            page.update()
 
         # -------------------- HOME PAGE --------------------
         home_body = ft.Column([], spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
@@ -6900,6 +7095,23 @@ async def build_ui(page: ft.Page):
             this = month_stats(transactions, today_d.year, today_d.month)
             profile_name = profile_names_state.get(str(active_profile_state["value"]), f"Profile {active_profile_state['value']}")
 
+            # The eye button hides every naira amount on Home (handy when someone is looking at your phone).
+            hidden = (await prefs.get("hide_amounts")) == "1"
+            MASK = "₦ •••••"
+
+            def money(value, decimals=2):
+                return MASK if hidden else fmt_money(value, decimals)
+
+            def mask_text(text):
+                return re.sub(r"-?₦\s?[\d,]+(?:\.\d+)?", "₦•••", text) if hidden else text
+
+            eye_button = ft.IconButton(
+                icon=ft.Icons.VISIBILITY_OFF_ROUNDED if hidden else ft.Icons.VISIBILITY_ROUNDED,
+                icon_color="#FFD54F", icon_size=20, on_click=toggle_hide_amounts,
+                tooltip="Show amounts" if hidden else "Hide amounts",
+                style=ft.ButtonStyle(padding=ft.Padding(left=4, right=4, top=0, bottom=0)),
+            )
+
             async def open_money(e):
                 await go_to_page("Money Tracker")
 
@@ -6915,7 +7127,7 @@ async def build_ui(page: ft.Page):
                             await go_to_page(r["page"])
                     return ft.Container(
                         content=ft.Row([ft.Icon(r["icon"], color=r["color"], size=18),
-                                        ft.Text(r["text"], color="white", size=12, expand=True)],
+                                        ft.Text(mask_text(r["text"]), color="white", size=12, expand=True)],
                                        spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
                         on_click=open_it, ink=True, border_radius=8, padding=ft.Padding(left=2, right=2, top=4, bottom=4),
                     )
@@ -6927,12 +7139,15 @@ async def build_ui(page: ft.Page):
             # ---- this month
             month_rows = [
                 card_title(ft.Icons.CALENDAR_MONTH_ROUNDED, today_d.strftime("%B %Y"),
-                           trailing=ft.Text(profile_name, color="#FFD54F", size=11, weight=ft.FontWeight.BOLD)),
+                           trailing=ft.Row([ft.Text(profile_name, color="#FFD54F", size=11, weight=ft.FontWeight.BOLD),
+                                            eye_button], spacing=0, tight=True,
+                                           vertical_alignment=ft.CrossAxisAlignment.CENTER)),
                 ft.Text("Balance this month", color=SOFT_TEXT, size=11),
-                ft.Text(fmt_money(this["net"]), size=28, weight=ft.FontWeight.BOLD,
-                        color=MONEY_GREEN if this["net"] >= 0 else MONEY_RED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                ft.Row([stat_tile("Money in", fmt_money(this["income"], 0), MONEY_GREEN),
-                        stat_tile("Money out", fmt_money(this["spent"], 0), MONEY_RED)], spacing=8),
+                ft.Text(money(this["net"]), size=28, weight=ft.FontWeight.BOLD,
+                        color="white" if hidden else (MONEY_GREEN if this["net"] >= 0 else MONEY_RED),
+                        max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Row([stat_tile("Money in", money(this["income"], 0), MONEY_GREEN),
+                        stat_tile("Money out", money(this["spent"], 0), MONEY_RED)], spacing=8),
             ]
             if this["count"] == 0:
                 month_rows.append(ft.Text("Nothing recorded this month yet. Add your first income or expense.", color=SOFT_TEXT, size=12))
@@ -6956,6 +7171,82 @@ async def build_ui(page: ft.Page):
             ))
             cards.append(home_card(month_rows, border_color="#FFD700"))
 
+            # ---- month-end to-do list
+            all_todos = await load_todos()
+            this_key = month_key(today_d)
+            todos = [t for t in all_todos if t.get("month") == this_key]
+            p_year, p_month = prev_month(today_d.year, today_d.month)
+            last_key = f"{p_year:04d}-{p_month:02d}"
+            unfinished_last = [t for t in all_todos if t.get("month") == last_key and not t.get("done")]
+            todo_rows = [card_title(ft.Icons.CHECKLIST_ROUNDED, f"To-Do for {today_d.strftime('%B')}", color="#4FC3F7",
+                                    trailing=link_button("+ Add", lambda e: open_todo_dialog()))]
+            if unfinished_last and await prefs.get("todo_carried_" + this_key) != "1":
+                n_left = len(unfinished_last)
+                todo_rows.append(ft.Container(
+                    content=ft.Row(
+                        [ft.Icon(ft.Icons.HISTORY_ROUNDED, color="#4FC3F7", size=18),
+                         ft.Text(f"{n_left} item{'s' if n_left != 1 else ''} from "
+                                 f"{datetime.date(p_year, p_month, 1).strftime('%B')} not done.",
+                                 color="white", size=12, expand=True),
+                         ft.TextButton(content=ft.Text("Bring over", color="#FFD54F", weight=ft.FontWeight.BOLD, size=12),
+                                       on_click=carry_over_todos),
+                         ft.IconButton(icon=ft.Icons.CLOSE_ROUNDED, icon_color=SOFT_TEXT, icon_size=16,
+                                       on_click=dismiss_carry_over, tooltip="Hide")],
+                        spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.Padding(left=8, right=0, top=2, bottom=2), border_radius=10,
+                    bgcolor=ft.Colors.with_opacity(0.10, "#4FC3F7"),
+                ))
+            if not todos:
+                todo_rows.append(ft.Text("Plan what this month's salary should do: pay rent, send money home, "
+                                         "buy foodstuff, save for a goal. Then tick each one off.",
+                                         color=SOFT_TEXT, size=12))
+            else:
+                done_n = len([t for t in todos if t.get("done")])
+                planned = sum(todo_amount(t) for t in todos)
+                still = sum(todo_amount(t) for t in todos if not t.get("done"))
+                todo_rows.append(ft.Row(
+                    [ft.Text(f"{done_n} of {len(todos)} done", color="white", size=12, weight=ft.FontWeight.BOLD, expand=True),
+                     ft.Text("All done!" if done_n == len(todos) else "", color=MONEY_GREEN, size=12, weight=ft.FontWeight.BOLD)],
+                    spacing=6))
+                todo_rows.append(ui_progress_bar(done_n / len(todos) * 100.0, "#4FC3F7" if done_n < len(todos) else "#2E8B57"))
+                # Not-done items first, in the order they were added; done ones sink to the bottom.
+                for t in sorted(todos, key=lambda t: bool(t.get("done"))):
+                    is_done = bool(t.get("done"))
+                    amt = todo_amount(t)
+
+                    async def on_tick(e, tid=t["id"]):
+                        await toggle_todo(tid, e.control.value)
+
+                    todo_rows.append(ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Checkbox(value=is_done, on_change=on_tick, active_color="#2E8B57",
+                                            check_color="white",
+                                            border_side=ft.BorderSide(2, "#4FC3F7")),
+                                ft.Text(t.get("text", ""), size=13, expand=True, max_lines=2,
+                                        overflow=ft.TextOverflow.ELLIPSIS,
+                                        color=SOFT_TEXT if is_done else "white",
+                                        weight=None if is_done else ft.FontWeight.BOLD,
+                                        style=ft.TextStyle(decoration=ft.TextDecoration.LINE_THROUGH) if is_done else None),
+                                ft.Text(money(amt, 0) if amt else "", size=12, weight=ft.FontWeight.BOLD,
+                                        color=SOFT_TEXT if is_done else "#FFD54F"),
+                            ],
+                            spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        border_radius=10, padding=ft.Padding(left=0, right=8, top=0, bottom=0),
+                        bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
+                        on_click=lambda e, it=t: open_todo_dialog(it), ink=True,
+                    ))
+                if planned > 0:
+                    todo_rows.append(ft.Text(
+                        f"Planned {money(planned, 0)} · still to go {money(still, 0)}"
+                        if still > 0 else f"Planned {money(planned, 0)} · all paid",
+                        color=SOFT_TEXT, size=12))
+                todo_rows.append(ft.Text("Tick a box when it's done. Tap an item to edit or delete it.",
+                                         color=SOFT_TEXT, size=11, italic=True))
+            cards.append(home_card(todo_rows, border_color="#4FC3F7"))
+
             # ---- the four tools
             cards.append(ft.Row([tool_tile(1), tool_tile(2)], spacing=10))
             cards.append(ft.Row([tool_tile(3), tool_tile(4)], spacing=10))
@@ -6974,10 +7265,10 @@ async def build_ui(page: ft.Page):
                 cards.append(home_card(
                     [
                         card_title(ft.Icons.SAVINGS_ROUNDED, "Budget this month"),
-                        ft.Text(f"{fmt_money(left, 0)} left" if left >= 0 else f"Over by {fmt_money(-left, 0)}",
+                        ft.Text(f"{money(left, 0)} left" if left >= 0 else f"Over by {money(-left, 0)}",
                                 size=20, weight=ft.FontWeight.BOLD, color=MONEY_GREEN if left >= 0 else MONEY_RED),
                         ui_progress_bar(pct, bar_color),
-                        ft.Text(f"{fmt_money(total_used, 0)} used of {fmt_money(total_limit, 0)} across "
+                        ft.Text(f"{money(total_used, 0)} used of {money(total_limit, 0)} across "
                                 f"{len(budgets)} budget{'s' if len(budgets) != 1 else ''}", color=SOFT_TEXT, size=12),
                     ],
                     on_click=open_money,
@@ -7012,7 +7303,7 @@ async def build_ui(page: ft.Page):
                 ajo_rows = [
                     card_title(ft.Icons.GROUPS_ROUNDED, st["name"], color="#CE93D8",
                                trailing=ft.Text(f"Round {st['round']} of {st['rounds']}", color="#FFD54F", size=11, weight=ft.FontWeight.BOLD)),
-                    ft.Text(f"{st['collector']} collects {fmt_money(st['full_pot'], 0)}", color="white", size=15, weight=ft.FontWeight.BOLD),
+                    ft.Text(f"{st['collector']} collects {money(st['full_pot'], 0)}", color="white", size=15, weight=ft.FontWeight.BOLD),
                 ]
                 if st["due"]:
                     ajo_rows.append(ft.Text(
@@ -7050,8 +7341,8 @@ async def build_ui(page: ft.Page):
                                             max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                                     ft.Text(f"{min(pct, 999):.0f}%", color="#FFD54F", size=13, weight=ft.FontWeight.BOLD)], spacing=8),
                             ui_progress_bar(pct, "#2E8B57" if pct < 100 else "#FFD54F"),
-                            ft.Text(f"{fmt_money(saved, 0)} of {fmt_money(target, 0)}", color="white", size=12),
-                            ft.Text(hint, color=hint_color, size=11),
+                            ft.Text(f"{money(saved, 0)} of {money(target, 0)}", color="white", size=12),
+                            ft.Text(mask_text(hint), color=hint_color, size=11),
                         ],
                         spacing=4, tight=True, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
                     ),
