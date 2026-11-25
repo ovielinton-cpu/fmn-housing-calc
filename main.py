@@ -217,6 +217,82 @@ def native_vibrate(ms=35):
 
 
 # ---------------------------------------------------------------------------
+# Phone notifications (Android, through pyjnius). Used for to-do reminders. They can be
+# posted while the app is open or still running in the background; Android needs the
+# POST_NOTIFICATIONS permission (pyproject.toml) and, on Android 13+, the user's OK.
+# ---------------------------------------------------------------------------
+_NOTIFY_CHANNEL = "todo_reminders"
+_NOTIFY = {"ready": None}
+
+
+def _android_activity():
+    from jnius import autoclass
+    host = os.getenv("MAIN_ACTIVITY_HOST_CLASS_NAME")
+    if not host:
+        return None
+    return autoclass(host).mActivity
+
+
+def request_notify_permission():
+    """Ask once for permission to show notifications (Android 13 and newer)."""
+    try:
+        from jnius import autoclass
+        activity = _android_activity()
+        if activity is None:
+            return False
+        if autoclass("android.os.Build$VERSION").SDK_INT < 33:
+            return True
+        perm = "android.permission.POST_NOTIFICATIONS"
+        if activity.checkSelfPermission(perm) == 0:  # PackageManager.PERMISSION_GRANTED
+            return True
+        activity.requestPermissions([perm], 4711)
+        return False
+    except Exception:
+        return False
+
+
+def native_notify(title, text, notif_id=1):
+    """Show a notification in the phone's notification shade. Returns True when shown."""
+    try:
+        from jnius import autoclass, cast
+        activity = _android_activity()
+        if activity is None:
+            return False
+        Context = autoclass("android.content.Context")
+        sdk = autoclass("android.os.Build$VERSION").SDK_INT
+        manager = cast("android.app.NotificationManager", activity.getSystemService(Context.NOTIFICATION_SERVICE))
+        Builder = autoclass("android.app.Notification$Builder")
+        if sdk >= 26:
+            if not _NOTIFY["ready"]:
+                NotificationChannel = autoclass("android.app.NotificationChannel")
+                NotificationManager = autoclass("android.app.NotificationManager")
+                channel = NotificationChannel(_NOTIFY_CHANNEL, "To-do reminders", NotificationManager.IMPORTANCE_HIGH)
+                channel.setDescription("Reminders for items on your month-end to-do list")
+                manager.createNotificationChannel(channel)
+                _NOTIFY["ready"] = True
+            builder = Builder(activity, _NOTIFY_CHANNEL)
+        else:
+            builder = Builder(activity)
+            builder.setPriority(1)  # PRIORITY_HIGH
+            builder.setDefaults(-1)  # sound + vibration + light
+        PendingIntent = autoclass("android.app.PendingIntent")
+        launch = activity.getPackageManager().getLaunchIntentForPackage(activity.getPackageName())
+        flags = PendingIntent.FLAG_UPDATE_CURRENT | (PendingIntent.FLAG_IMMUTABLE if sdk >= 23 else 0)
+        content_intent = PendingIntent.getActivity(activity, int(notif_id) % 100000, launch, flags)
+        BigText = autoclass("android.app.Notification$BigTextStyle")
+        builder.setSmallIcon(activity.getApplicationInfo().icon)
+        builder.setContentTitle(str(title))
+        builder.setContentText(str(text))
+        builder.setStyle(BigText().bigText(str(text)))
+        builder.setContentIntent(content_intent)
+        builder.setAutoCancel(True)
+        manager.notify(int(notif_id) % 100000, builder.build())
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Faster start-up: every saved setting used to be fetched from the phone one at a time
 # (dozens of round trips before the first screen). Now they are all fetched together once,
 # kept in memory, and saves update both the memory copy and the phone.
@@ -1235,45 +1311,121 @@ async def build_ui(page: ft.Page):
         mode_badge_text = ft.Text("Dark Mode" if is_dark_mode else "Light Mode", size=11, weight=ft.FontWeight.BOLD, color="white")
 
         galaxy_stars_active = {"value": False}
+        galaxy_current = {"anim": None}   # only the newest galaxy keeps animating
+
+        GALAXY_W, GALAXY_H = 470, 980          # roughly the background area (screen plus tilt margin)
+        STAR_DRIFT = (7.0, -15.0)              # stars float up-right, along the Milky Way band
 
         def build_galaxy_background():
             # A painted Milky Way (stars, nebula clouds and dust lanes) as one picture, which costs a
-            # low-end phone almost nothing. With animations on, a few extra stars twinkle on top.
-            stars = []
-            if motion["on"]:
-                for _ in range(36):
-                    dot_size = random.choice([2, 2, 3, 3, 4])
-                    stars.append(
-                        ft.Container(
-                            width=dot_size, height=dot_size,
-                            border_radius=dot_size,
-                            bgcolor=random.choice(["white", "white", "#CFE3FF", "#FFE4C4", "#FFC8E8"]),
-                            left=random.randint(5, 400),
-                            top=random.randint(10, 860),
-                            opacity=random.uniform(0.35, 1.0),
-                            animate_opacity=ft.Animation(random.randint(1200, 2400), ft.AnimationCurve.EASE_IN_OUT),
-                        )
-                    )
-            return stars, ft.Stack(
-                controls=[
-                    ft.Container(bgcolor="#07041A", left=0, top=0, right=0, bottom=0),
-                    ft.Image(src="galaxy.jpg", fit=ft.BoxFit.COVER, left=0, top=0, right=0, bottom=0),
-                ] + stars,
-                expand=True,
+            # low-end phone almost nothing. With animations on it comes alive: the galaxy slowly turns
+            # and breathes, stars drift along the band and twinkle, and now and then a star shoots past.
+            anim = {"stars": [], "speeds": [], "sky": None, "shooter": None}
+            sky = ft.Container(
+                content=ft.Image(src="galaxy.jpg", fit=ft.BoxFit.COVER),
+                left=0, top=0, right=0, bottom=0,
+                scale=1.1, rotate=0,
+                animate_scale=ft.Animation(26000, ft.AnimationCurve.EASE_IN_OUT),
+                animate_rotation=ft.Animation(26000, ft.AnimationCurve.EASE_IN_OUT),
             )
+            layers = [ft.Container(bgcolor="#07041A", left=0, top=0, right=0, bottom=0), sky]
+            anim["sky"] = sky
+            galaxy_current["anim"] = anim
+            if motion["on"]:
+                for _ in range(40):
+                    dot_size = random.choice([2, 2, 2, 3, 3, 4])
+                    star = ft.Container(
+                        width=dot_size, height=dot_size,
+                        border_radius=dot_size,
+                        bgcolor=random.choice(["white", "white", "#CFE3FF", "#FFE4C4", "#FFC8E8"]),
+                        left=random.uniform(0, GALAXY_W),
+                        top=random.uniform(0, GALAXY_H),
+                        opacity=random.uniform(0.35, 1.0),
+                        animate_opacity=ft.Animation(random.randint(1200, 2400), ft.AnimationCurve.EASE_IN_OUT),
+                        animate_position=ft.Animation(3000, ft.AnimationCurve.LINEAR),
+                    )
+                    anim["stars"].append(star)
+                    anim["speeds"].append(random.uniform(0.5, 1.6))  # nearer stars move faster
+                shooter = ft.Container(
+                    width=120, height=2, border_radius=2, rotate=-0.5, opacity=0,
+                    left=GALAXY_W, top=60,
+                    gradient=ft.LinearGradient(begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0),
+                                               colors=["#FFFFFF", ft.Colors.with_opacity(0.0, "#CFE3FF")]),
+                    animate_position=ft.Animation(900, ft.AnimationCurve.EASE_IN),
+                    animate_opacity=ft.Animation(250, ft.AnimationCurve.EASE_OUT),
+                )
+                anim["shooter"] = shooter
+                layers += anim["stars"] + [shooter]
+            return anim, ft.Stack(controls=layers, expand=True)
 
-        async def twinkle_galaxy(stars):
+        async def shooting_star(shooter):
+            # Jump (invisibly) to a start point in the upper half, then streak down-left and fade.
+            shooter.opacity = 0
+            shooter.left = random.uniform(GALAXY_W * 0.45, GALAXY_W)
+            shooter.top = random.uniform(20, GALAXY_H * 0.45)
+            _refresh(background_layer)
+            await asyncio.sleep(1.0)
+            if not galaxy_stars_active["value"]:
+                return
+            shooter.opacity = 1
+            shooter.left -= 300
+            shooter.top += 165
+            _refresh(background_layer)
+            await asyncio.sleep(0.6)
+            shooter.opacity = 0
+            _refresh(background_layer)
+
+        async def twinkle_galaxy(anim):
+            stars, speeds, sky, shooter = anim["stars"], anim["speeds"], anim["sky"], anim["shooter"]
+            tick, next_turn, next_shot = 0, 0, random.randint(3, 6)
             try:
-                while galaxy_stars_active["value"] and build_gen["n"] == my_gen:
-                    if not app_active["value"] or not motion["on"]:
+                while galaxy_stars_active["value"] and build_gen["n"] == my_gen and galaxy_current["anim"] is anim:
+                    if not app_active["value"] or not motion["on"] or not stars:
                         await asyncio.sleep(1.0)
                         continue
-                    for s in stars:
+                    for s, k in zip(stars, speeds):
+                        # A star that floats off the top/right edge fades out, jumps (unseen) back to
+                        # the bottom/left edge, then fades in again: three quiet steps.
+                        if s.data == "hiding":
+                            s.data = "wrap"
+                            if random.random() < 0.5:
+                                s.left, s.top = random.uniform(-5, GALAXY_W * 0.6), GALAXY_H + random.uniform(0, 20)
+                            else:
+                                s.left, s.top = -random.uniform(0, 20), random.uniform(GALAXY_H * 0.3, GALAXY_H)
+                            continue
+                        if s.data == "wrap":
+                            s.data = None
+                            s.opacity = random.uniform(0.35, 1.0)
+                            continue
+                        if s.left > GALAXY_W or s.top < -5:
+                            s.data = "hiding"
+                            s.opacity = 0
+                            continue
+                        s.left += STAR_DRIFT[0] * k
+                        s.top += STAR_DRIFT[1] * k
                         s.opacity = random.uniform(0.3, 1.0)
+                    if tick >= next_turn:              # the whole galaxy slowly turns and breathes
+                        sky.scale = 1.1 if sky.scale > 1.12 else 1.16
+                        sky.rotate = -0.035 if (sky.rotate or 0) >= 0 else 0.035
+                        next_turn = tick + 9           # 9 ticks x 3 s ~ the 26 s animation
                     _refresh(background_layer)
-                    await asyncio.sleep(1.8)
+                    if shooter is not None and tick >= next_shot:
+                        asyncio.create_task(shooting_star(shooter))
+                        next_shot = tick + random.randint(3, 6)
+                    tick += 1
+                    await asyncio.sleep(3.0)
             except Exception:
                 pass
+
+        def restart_galaxy():
+            """Rebuild the dark background (e.g. after animations are switched on or off)."""
+            if not dark_mode_state["value"]:
+                return
+            galaxy_stars_active["value"] = False
+            anim, stack = build_galaxy_background()
+            background_layer.content = stack
+            galaxy_stars_active["value"] = True
+            asyncio.create_task(twinkle_galaxy(anim))
 
         def build_light_background():
             # The big "h" stays bright behind the header and fades into deep purple lower down,
@@ -1303,12 +1455,16 @@ async def build_ui(page: ft.Page):
                 asyncio.create_task(twinkle_galaxy(galaxy_stars))
                 mode_badge_icon.icon = ft.Icons.DARK_MODE_ROUNDED
                 mode_badge_text.value = "Dark Mode"
+                logo_image.src = "logo_bw.png"
+                logo_backing_square.bgcolor = "#FFFFFF"
             else:
                 galaxy_stars_active["value"] = False
                 background_layer.content = build_light_background()
                 background_layer.bgcolor = None
                 mode_badge_icon.icon = ft.Icons.LIGHT_MODE_ROUNDED
                 mode_badge_text.value = "Light Mode"
+                logo_image.src = "background.png"
+                logo_backing_square.bgcolor = "#FFD54F"
             await prefs.set("theme_override", "dark" if dark_mode_state["value"] else "light")
             page.update()
 
@@ -1343,7 +1499,9 @@ async def build_ui(page: ft.Page):
         )
 
         # The purple "h" (same picture as the app icon), cropped to a rounded square.
-        logo_image = ft.Image(src="background.png", width=90, height=90, fit=ft.BoxFit.COVER, border_radius=20)
+        # In dark mode the logo turns black and white, on a white backing square instead of gold.
+        logo_image = ft.Image(src="logo_bw.png" if is_dark_mode else "background.png",
+                              width=90, height=90, fit=ft.BoxFit.COVER, border_radius=20)
         logo_container = ft.Container(
             content=logo_image,
             scale=1.0,
@@ -1355,7 +1513,7 @@ async def build_ui(page: ft.Page):
         logo_backing_square = ft.Container(
             width=90,
             height=90,
-            bgcolor="#FFD54F",
+            bgcolor="#FFFFFF" if is_dark_mode else "#FFD54F",
             border_radius=20,
             rotate=0,
             animate_rotation=ft.Animation(18000, ft.AnimationCurve.LINEAR),
@@ -6832,6 +6990,27 @@ async def build_ui(page: ft.Page):
             except Exception:
                 pass
             try:
+                now_dt = datetime.datetime.now()
+                for t in await load_todos():
+                    due = todo_due(t)
+                    if t.get("done") or due is None:
+                        continue
+                    days = (due.date() - today_d).days
+                    if days > 1:
+                        continue
+                    when = due.strftime("%I:%M %p").lstrip("0")
+                    if days < 0:
+                        phrase = f"was due {fmt_due(due)}"
+                    elif days == 0:
+                        phrase = f"is due today at {when}" if due > now_dt else f"was due today at {when}"
+                    else:
+                        phrase = f"is due tomorrow at {when}"
+                    items.append({"urgent": days <= 0, "icon": ft.Icons.ALARM_ROUNDED,
+                                  "color": MONEY_RED if due <= now_dt else "#4FC3F7",
+                                  "text": f"To-do “{t.get('text', '')}” {phrase}.", "page": "Home"})
+            except Exception:
+                pass
+            try:
                 days_to_end = calendar.monthrange(today_d.year, today_d.month)[1] - today_d.day
                 if days_to_end <= 3:
                     this_key = f"{today_d.year:04d}-{today_d.month:02d}"
@@ -6911,6 +7090,17 @@ async def build_ui(page: ft.Page):
             except (TypeError, ValueError):
                 return 0.0
 
+        def todo_due(t):
+            """The reminder date/time of a to-do item, or None."""
+            try:
+                return datetime.datetime.fromisoformat(t.get("due") or "")
+            except Exception:
+                return None
+
+        def fmt_due(dt):
+            time_s = dt.strftime("%I:%M %p").lstrip("0")
+            return f"{dt.strftime('%d %b').lstrip('0')}, {time_s}"
+
         def open_todo_dialog(item=None):
             editing = item is not None
             current = item or {}
@@ -6923,6 +7113,56 @@ async def build_ui(page: ft.Page):
             amount_field.on_change = with_length_warning(amount_field, 15)
             error_text = ft.Text("", color="red", size=12)
             busy = {"v": False}
+
+            # Reminder: an optional date and time. When it comes, the app shows a phone notification.
+            start_due = todo_due(current)
+            due_state = {"date": start_due.date() if start_due else None,
+                         "time": start_due.time() if start_due else datetime.time(9, 0)}
+            no_date_label = "Pick a date (optional)"
+            date_text = ft.Text("", color="#4B0082", size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+            time_text = ft.Text("", color="#4B0082", size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+            time_button = ft.ElevatedButton(content=ft.Container(content=time_text, width=80),
+                                            on_click=lambda e: page.show_dialog(time_picker),
+                                            style=ft.ButtonStyle(bgcolor="#FFD700"))
+            clear_button = ft.TextButton("Clear", on_click=lambda e: clear_due(), style=ft.ButtonStyle(color=PURPLE_TEXT))
+
+            def show_due():
+                d = due_state["date"]
+                date_text.value = d.strftime("%a %d %b %Y") if d else no_date_label
+                time_text.value = due_state["time"].strftime("%I:%M %p").lstrip("0")
+                time_button.visible = d is not None
+                clear_button.visible = d is not None
+
+            def clear_due():
+                due_state["date"] = None
+                show_due()
+                page.update()
+
+            def on_date_picked(e):
+                picked = e.control.value
+                if picked:
+                    due_state["date"] = picked_to_date(picked)
+                    show_due()
+                    request_notify_permission()
+                    page.update()
+
+            def on_time_picked(e):
+                picked = e.control.value
+                if isinstance(picked, datetime.time):
+                    due_state["time"] = picked.replace(second=0, microsecond=0)
+                    show_due()
+                    page.update()
+
+            date_picker = ft.DatePicker(
+                value=datetime.datetime.combine(due_state["date"], datetime.time(12, 0))
+                if due_state["date"] and due_state["date"] >= datetime.date.today() else None,
+                first_date=datetime.datetime.now() - datetime.timedelta(days=1),
+                last_date=datetime.datetime.now() + datetime.timedelta(days=400),
+                on_change=on_date_picked,
+            )
+            time_picker = ft.TimePicker(value=due_state["time"], on_change=on_time_picked,
+                                        help_text="Remind me at")
+            show_due()
 
             async def save_item(e):
                 if busy["v"]:
@@ -6949,17 +7189,25 @@ async def build_ui(page: ft.Page):
                     page.update()
                     return
                 busy["v"] = True
+                due = ""
+                if due_state["date"]:
+                    due = datetime.datetime.combine(due_state["date"], due_state["time"]).isoformat(timespec="minutes")
                 if editing:
                     for t in items:
                         if t.get("id") == current.get("id"):
-                            t.update({"text": text, "amount": amount})
+                            if t.get("due", "") != due:
+                                t["notified"] = False  # new time: remind again
+                            t.update({"text": text, "amount": amount, "due": due})
                 else:
                     items.append({"id": new_ajo_id(), "text": text, "amount": amount, "done": False,
-                                  "month": this_month, "created": datetime.date.today().isoformat()})
+                                  "month": this_month, "created": datetime.date.today().isoformat(),
+                                  "due": due, "notified": False})
                 await save_todos(items)
                 page.pop_dialog()
                 await refresh_home_ui()
                 page.update()
+                if due:
+                    asyncio.create_task(check_todo_reminders())
 
             async def delete_item(e):
                 if busy["v"]:
@@ -6985,15 +7233,65 @@ async def build_ui(page: ft.Page):
                             ft.Text("What do you want to do with this month's money?", color=DARK_TEXT, size=12),
                             field_with_caption("To-do", text_field, on_white=True),
                             field_with_caption("Amount (₦), optional", amount_field, on_white=True),
+                            ft.Text("Remind me on", color=PURPLE_TEXT, size=12, weight=ft.FontWeight.BOLD),
+                            ft.Row(
+                                [
+                                    ft.ElevatedButton(content=ft.Container(content=date_text, width=150),
+                                                      on_click=lambda e: page.show_dialog(date_picker),
+                                                      style=ft.ButtonStyle(bgcolor="#FFD700")),
+                                    time_button,
+                                    clear_button,
+                                ],
+                                spacing=6, wrap=True, run_spacing=6,
+                            ),
+                            ft.Text("You'll get a phone notification at that time.", color="#666666", size=11),
                             error_text,
                         ],
-                        tight=True, spacing=14,
+                        tight=True, spacing=12,
                     ),
                     width=300,
                 ),
                 actions=actions,
                 actions_alignment=ft.MainAxisAlignment.END,
             ))
+
+        todo_notify_state = {"running": False}
+
+        async def check_todo_reminders():
+            """Send a phone notification for each to-do whose reminder time has come."""
+            if todo_notify_state["running"]:
+                return
+            todo_notify_state["running"] = True
+            try:
+                items = await load_todos()
+                now = datetime.datetime.now()
+                changed = False
+                for t in items:
+                    due = todo_due(t)
+                    if t.get("done") or t.get("notified") or due is None or due > now:
+                        continue
+                    amt = todo_amount(t)
+                    body = t.get("text", "") + (f" ({fmt_money(amt, 0)})" if amt else "")
+                    if (now - due).total_seconds() > 3600:
+                        body += f". It was due {fmt_due(due)}."
+                    native_notify("To-do reminder", body, notif_id=abs(hash(t.get("id"))))
+                    t["notified"] = True
+                    changed = True
+                if changed:
+                    await save_todos(items)
+                    if build_gen["n"] == my_gen and tab_labels[current_tab_index["value"]] == "Home":
+                        await refresh_home_ui()
+                        page.update()
+            except Exception:
+                pass
+            finally:
+                todo_notify_state["running"] = False
+
+        async def todo_reminder_loop():
+            # Checks every minute while the app is open or still alive in the background.
+            while build_gen["n"] == my_gen:
+                await check_todo_reminders()
+                await asyncio.sleep(60)
 
         async def toggle_todo(item_id, done):
             items = await load_todos()
@@ -7214,6 +7512,21 @@ async def build_ui(page: ft.Page):
                 for t in sorted(todos, key=lambda t: bool(t.get("done"))):
                     is_done = bool(t.get("done"))
                     amt = todo_amount(t)
+                    due_dt = todo_due(t)
+                    due_label, due_color = "", SOFT_TEXT
+                    if due_dt is not None and not is_done:
+                        days = (due_dt.date() - today_d).days
+                        when = due_dt.strftime("%I:%M %p").lstrip("0")
+                        if days < 0 or (days == 0 and due_dt <= datetime.datetime.now()):
+                            due_label, due_color = f"Due {fmt_due(due_dt)} (passed)", MONEY_RED
+                        elif days == 0:
+                            due_label, due_color = f"Today, {when}", "#FFB74D"
+                        elif days == 1:
+                            due_label, due_color = f"Tomorrow, {when}", "#FFB74D"
+                        else:
+                            due_label, due_color = fmt_due(due_dt), "#81D4FA"
+                    elif due_dt is not None:
+                        due_label = fmt_due(due_dt)
 
                     async def on_tick(e, tid=t["id"]):
                         await toggle_todo(tid, e.control.value)
@@ -7224,11 +7537,17 @@ async def build_ui(page: ft.Page):
                                 ft.Checkbox(value=is_done, on_change=on_tick, active_color="#2E8B57",
                                             check_color="white",
                                             border_side=ft.BorderSide(2, "#4FC3F7")),
-                                ft.Text(t.get("text", ""), size=13, expand=True, max_lines=2,
-                                        overflow=ft.TextOverflow.ELLIPSIS,
-                                        color=SOFT_TEXT if is_done else "white",
-                                        weight=None if is_done else ft.FontWeight.BOLD,
-                                        style=ft.TextStyle(decoration=ft.TextDecoration.LINE_THROUGH) if is_done else None),
+                                ft.Column(
+                                    [ft.Text(t.get("text", ""), size=13, max_lines=2,
+                                             overflow=ft.TextOverflow.ELLIPSIS,
+                                             color=SOFT_TEXT if is_done else "white",
+                                             weight=None if is_done else ft.FontWeight.BOLD,
+                                             style=ft.TextStyle(decoration=ft.TextDecoration.LINE_THROUGH) if is_done else None)]
+                                    + ([ft.Row([ft.Icon(ft.Icons.ALARM_ROUNDED, size=13, color=due_color),
+                                                ft.Text(due_label, size=11, color=due_color)], spacing=3, tight=True)]
+                                       if due_label else []),
+                                    spacing=1, tight=True, expand=True,
+                                ),
                                 ft.Text(money(amt, 0) if amt else "", size=12, weight=ft.FontWeight.BOLD,
                                         color=SOFT_TEXT if is_done else "#FFD54F"),
                             ],
@@ -7243,7 +7562,7 @@ async def build_ui(page: ft.Page):
                         f"Planned {money(planned, 0)} · still to go {money(still, 0)}"
                         if still > 0 else f"Planned {money(planned, 0)} · all paid",
                         color=SOFT_TEXT, size=12))
-                todo_rows.append(ft.Text("Tick a box when it's done. Tap an item to edit or delete it.",
+                todo_rows.append(ft.Text("Tick a box when it's done. Tap an item to edit it or set a reminder.",
                                          color=SOFT_TEXT, size=11, italic=True))
             cards.append(home_card(todo_rows, border_color="#4FC3F7"))
 
@@ -8223,6 +8542,7 @@ async def build_ui(page: ft.Page):
                 stop_tilt_sensor()
                 logo_container.scale = 1.0
                 wave_hand.rotate = 0
+            restart_galaxy()
             page.update()
 
         settings_actions["motion"] = set_motion_effects
@@ -8275,6 +8595,7 @@ async def build_ui(page: ft.Page):
                     page.update()
                 except Exception:
                     pass
+            asyncio.create_task(todo_reminder_loop())
             await maybe_show_reminders_popup()
             await asyncio.sleep(1.5)
             if build_gen["n"] == my_gen:
@@ -8286,6 +8607,10 @@ async def build_ui(page: ft.Page):
         async def _catch_up_after_resume():
             # Runs in the background so the screen is usable the instant you come back,
             # and gives up after 10 s instead of freezing the app if something is stuck.
+            try:
+                await asyncio.wait_for(check_todo_reminders(), timeout=5)
+            except Exception:
+                pass
             try:
                 await asyncio.wait_for(apply_recurring_all(), timeout=5)
             except Exception:

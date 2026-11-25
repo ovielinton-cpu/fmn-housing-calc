@@ -25,6 +25,8 @@ dependencies = [
 # Allows the short buzz on tap. A normal permission: no pop-up, nothing to declare on Play.
 [tool.flet.android.permission]
 "android.permission.VIBRATE" = true
+# Lets the app show to-do reminders in the notification shade (Android 13+ asks the user once).
+"android.permission.POST_NOTIFICATIONS" = true
 
 # Required by Google AdMob (flet-ads). Without it the app closes as soon as it opens.
 [tool.flet.android.meta_data]
