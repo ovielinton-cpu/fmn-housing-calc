@@ -7249,12 +7249,8 @@ async def build_ui(page: ft.Page):
             async def delete_item(e):
                 if busy["v"]:
                     return
-                busy["v"] = True
-                items = await load_todos()
-                await save_todos([t for t in items if t.get("id") != current.get("id")])
                 page.pop_dialog()
-                await refresh_home_ui()
-                page.update()
+                open_todo_delete_dialog(current)
 
             actions = [ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog(), style=ft.ButtonStyle(color=PURPLE_TEXT))]
             if editing:
@@ -7289,6 +7285,118 @@ async def build_ui(page: ft.Page):
                     width=300,
                 ),
                 actions=actions,
+                actions_alignment=ft.MainAxisAlignment.END,
+            ))
+
+        TODO_CATEGORY_HINTS = [
+            ("Housing", ("rent", "house", "landlord", "apartment", "agent", "caution fee")),
+            ("Food", ("food", "market", "rice", "beans", "garri", "yam", "provision", "groceries", "meat", "fish")),
+            ("Transport", ("transport", "fuel", "petrol", "diesel", "uber", "bolt", "bus", "fare", "car", "okada", "keke")),
+            ("Utilities", ("light", "nepa", "electric", "prepaid", "water", "dstv", "gotv", "startimes", "data",
+                           "airtime", "internet", "wifi", "gas", "waste")),
+            ("Health", ("hospital", "drug", "medic", "pharmacy", "clinic", "health", "hmo")),
+            ("Entertainment", ("netflix", "showmax", "cinema", "party", "outing", "spotify")),
+            ("Fee", ("school fee", "fees", "tuition", "levy", "dues")),
+        ]
+
+        def guess_todo_category(text):
+            low = (text or "").lower()
+            for cat, words in TODO_CATEGORY_HINTS:
+                if any(w in low for w in words) and cat in CATEGORY_OPTIONS:
+                    return cat
+            return "Other"
+
+        def open_todo_delete_dialog(item):
+            """Before a to-do is deleted, offer to record its amount as an expense in Money Tracker."""
+            text = item.get("text", "")
+            amount = todo_amount(item)
+            busy = {"v": False}
+
+            async def remove(add_expense, category=None):
+                if busy["v"]:
+                    return
+                busy["v"] = True
+                if add_expense:
+                    transactions = await load_transactions()
+                    transactions.insert(0, {
+                        "type": "expense",
+                        "category": category or "Other",
+                        "amount": amount,
+                        "charge": 0.0,
+                        "note": text[:60],
+                        "date": datetime.date.today().isoformat(),
+                        "time": datetime.datetime.now().strftime("%H:%M"),
+                    })
+                    await save_transactions(transactions[:10000])
+                items = await load_todos()
+                await save_todos([t for t in items if t.get("id") != item.get("id")])
+                page.pop_dialog()
+                await refresh_home_ui()
+                page.update()
+                if add_expense:
+                    snack(f"Added {fmt_money(amount, 0)} to your expenses ({category}) and removed the to-do.",
+                          color="#2E8B57", seconds=3)
+                else:
+                    snack("To-do deleted.", color="#2E8B57", seconds=3)
+
+            def cancel(e):
+                page.pop_dialog()
+
+            async def just_delete(e):
+                await remove(False)
+
+            async def add_and_delete(e):
+                await remove(True, category_state["value"])
+
+            category_state = {"value": "Other"}
+            if amount <= 0:
+                # Nothing to record: just make sure the delete was meant.
+                page.show_dialog(ft.AlertDialog(
+                    modal=True, bgcolor="#FFFFFF",
+                    title=ft.Text("Delete this to-do?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                    content=ft.Text(f"“{text}” will be removed from your list.", color=DARK_TEXT),
+                    actions=[
+                        ft.TextButton("Cancel", on_click=cancel, style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                        ft.ElevatedButton("Delete", on_click=just_delete,
+                                          style=ft.ButtonStyle(bgcolor="#C62828", color="white")),
+                    ],
+                    actions_alignment=ft.MainAxisAlignment.END,
+                ))
+                return
+
+            category_picker, category_state = build_category_picker(guess_todo_category(text))
+            page.show_dialog(ft.AlertDialog(
+                scrollable=True, modal=True, bgcolor="#FFFFFF",
+                title=ft.Text("Add it to your expenses?", color=PURPLE_TEXT, weight=ft.FontWeight.BOLD),
+                content=ft.Container(
+                    content=ft.Column(
+                        [
+                            ft.Container(
+                                content=ft.Row(
+                                    [ft.Icon(ft.Icons.CHECKLIST_ROUNDED, color=PURPLE_TEXT, size=20),
+                                     ft.Text(text, color=PURPLE_TEXT, weight=ft.FontWeight.BOLD, size=15, expand=True),
+                                     ft.Text(fmt_money(amount, 0), color="#C62828", weight=ft.FontWeight.W_800, size=15)],
+                                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                padding=12, border_radius=12, bgcolor="#F3E9FF",
+                            ),
+                            ft.Text("Did you spend this money? Before this to-do is deleted, you can record it "
+                                    "as an expense in Money Tracker (dated today).", color=DARK_TEXT, size=13),
+                            ft.Text("Category", color=PURPLE_TEXT, size=12, weight=ft.FontWeight.BOLD),
+                            category_picker,
+                        ],
+                        tight=True, spacing=12,
+                    ),
+                    width=300,
+                ),
+                actions=[
+                    ft.ElevatedButton("Yes, add to expenses",
+                                      on_click=add_and_delete,
+                                      style=ft.ButtonStyle(bgcolor="#2E8B57", color="white")),
+                    ft.TextButton("No, just delete", on_click=just_delete,
+                                  style=ft.ButtonStyle(color="#C62828")),
+                    ft.TextButton("Cancel", on_click=cancel, style=ft.ButtonStyle(color=PURPLE_TEXT)),
+                ],
                 actions_alignment=ft.MainAxisAlignment.END,
             ))
 
