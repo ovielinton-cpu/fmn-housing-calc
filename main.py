@@ -2431,6 +2431,7 @@ async def build_ui(page: ft.Page):
                         "note": f"Auto: {rec['note']}",
                         "date": entry_date,
                         "time": entry_time,
+                        "_desc": f"{title} {text}"[:400],  # for matching to-dos; not saved
                     })
                     rec["status"] = "added"
                     added += 1
@@ -2466,11 +2467,28 @@ async def build_ui(page: ft.Page):
             notif_sync_state.update(added=added, skipped=skipped, dupes=dupes,
                                     last_run=datetime.datetime.now().strftime("%H:%M:%S"))
             if new_txns:
+                ticked = []
+                try:
+                    ticked = await auto_tick_todos(new_txns)
+                except Exception:
+                    ticked = []
+                for t in new_txns:
+                    t.pop("_desc", None)
                 # Load the list only now, right before saving, so nothing typed meanwhile is lost.
                 transactions = await load_transactions()
                 for t in new_txns:  # newest alert ends up on top
                     transactions.insert(0, t)
                 await save_transactions(transactions[:10000])
+                if ticked:
+                    names = ", ".join(f"“{n}”" for n in ticked[:3]) + (" and more" if len(ticked) > 3 else "")
+                    native_notify("To-do done ✓", f"{names} ticked off from your bank alert.",
+                                  notif_id=abs(hash("autotick" + names)))
+                    try:
+                        if tab_labels[current_tab_index["value"]] == "Home":
+                            await refresh_home_ui()
+                            page.update()
+                    except Exception:
+                        pass
 
         async def open_notification_sync_dialog(e):
             status_text = ft.Text("", size=12, color=DARK_TEXT, weight=ft.FontWeight.BOLD)
@@ -7119,6 +7137,57 @@ async def build_ui(page: ft.Page):
             except (TypeError, ValueError):
                 return 0.0
 
+        TODO_STOP_WORDS = {
+            "pay", "paid", "payment", "send", "sent", "money", "buy", "bought", "the", "for", "and", "with",
+            "from", "month", "monthly", "this", "that", "my", "our", "your", "fee", "fees", "charge", "charges",
+            "transfer", "trf", "naira", "ngn", "debit", "credit", "alert", "account", "acct", "bank", "amount",
+            "balance", "bal", "date", "time", "via", "ref", "txn", "transaction", "plus", "own", "new",
+        }
+
+        def todo_words(text):
+            return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+                    if len(w) >= 3 and w not in TODO_STOP_WORDS and not w.isdigit()}
+
+        async def auto_tick_todos(new_txns):
+            """Bank alerts (personal build): when a debit matches an open to-do of this month, by its
+            words (e.g. "rent", "DSTV") or by the exact planned amount, tick that to-do as done.
+            Returns the names of the to-dos that were ticked."""
+            debits = [t for t in new_txns if t.get("type") == "expense"]
+            if not debits:
+                return []
+            items = await load_todos()
+            this_key = month_key()
+            open_items = [t for t in items if t.get("month") == this_key and not t.get("done")]
+            if not open_items:
+                return []
+            ticked = []
+            for txn in debits:
+                desc_words = todo_words(txn.get("_desc", "") + " " + txn.get("note", ""))
+                desc_low = (txn.get("_desc", "") + " " + txn.get("note", "")).lower()
+                try:
+                    amount = float(txn.get("amount", 0) or 0)
+                except (TypeError, ValueError):
+                    amount = 0.0
+                best, best_score = None, 0
+                for t in open_items:
+                    if t.get("done"):
+                        continue
+                    words = todo_words(t.get("text", ""))
+                    word_hit = any(w in desc_words or (len(w) >= 4 and w in desc_low) for w in words)
+                    planned = todo_amount(t)
+                    amount_hit = planned > 0 and abs(amount - planned) <= max(1.0, planned * 0.005)
+                    score = (2 if word_hit else 0) + (1 if amount_hit else 0)
+                    if score > best_score:
+                        best, best_score = t, score
+                if best is not None:
+                    best["done"] = True
+                    best["auto_done"] = {"note": txn.get("note", "")[:60], "amount": amount,
+                                         "date": txn.get("date", "")}
+                    ticked.append(best.get("text", ""))
+            if ticked:
+                await save_todos(items)
+            return ticked
+
         def reminder_todos(items):
             """Items that can still remind: not done, not brought over into a newer month, and not an
             older copy of something already on this month's list."""
@@ -7443,6 +7512,8 @@ async def build_ui(page: ft.Page):
             for t in items:
                 if t.get("id") == item_id:
                     t["done"] = bool(done)
+                    if not done:
+                        t.pop("auto_done", None)
             await save_todos(items)
             await refresh_home_ui()
             page.update()
@@ -7673,6 +7744,8 @@ async def build_ui(page: ft.Page):
                             due_label, due_color = fmt_due(due_dt), "#81D4FA"
                     elif due_dt is not None:
                         due_label = fmt_due(due_dt)
+                    if is_done and t.get("auto_done"):
+                        due_label, due_color = "Ticked from a bank alert", MONEY_GREEN
 
                     async def on_tick(e, tid=t["id"]):
                         await toggle_todo(tid, e.control.value)
@@ -7689,7 +7762,8 @@ async def build_ui(page: ft.Page):
                                              color=SOFT_TEXT if is_done else "#80D8FF",
                                              weight=ft.FontWeight.W_500 if is_done else ft.FontWeight.W_800,
                                              style=ft.TextStyle(decoration=ft.TextDecoration.LINE_THROUGH) if is_done else None)]
-                                    + ([ft.Row([ft.Icon(ft.Icons.ALARM_ROUNDED, size=13, color=due_color),
+                                    + ([ft.Row([ft.Icon(ft.Icons.TASK_ALT_ROUNDED if (is_done and t.get("auto_done"))
+                                                        else ft.Icons.ALARM_ROUNDED, size=13, color=due_color),
                                                 ft.Text(due_label, size=11, color=due_color)], spacing=3, tight=True)]
                                        if due_label else []),
                                     spacing=1, tight=True, expand=True,
@@ -7712,8 +7786,8 @@ async def build_ui(page: ft.Page):
                                         ft.Text(money(planned, 0), color=MONEY_GREEN, size=17, weight=ft.FontWeight.W_900)]),
                                 ft.Row([ft.Text("Still to go" if still > 0 else "All paid", color=SOFT_TEXT, size=13,
                                                 weight=ft.FontWeight.BOLD, expand=True),
-                                        ft.Text(money(still, 0) if still > 0 else "✓", color=MONEY_GREEN, size=15,
-                                                weight=ft.FontWeight.W_800)]),
+                                        ft.Text(money(still, 0), color=MONEY_GREEN, size=15, weight=ft.FontWeight.W_800)
+                                        if still > 0 else ft.Icon(ft.Icons.CHECK_CIRCLE_ROUNDED, color=MONEY_GREEN, size=20)]),
                             ],
                             spacing=4, tight=True,
                         ),
