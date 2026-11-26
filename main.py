@@ -1330,13 +1330,14 @@ async def build_ui(page: ft.Page):
         galaxy_current = {"anim": None}   # only the newest galaxy keeps animating
 
         GALAXY_W, GALAXY_H = 470, 980          # roughly the background area (screen plus tilt margin)
-        STAR_DRIFT = (7.0, -15.0)              # stars float up-right, along the Milky Way band
+        STAR_DRIFT = (11.0, -24.0)             # stars float up-right, along the Milky Way band
+        GALAXY_TICK = 2.0                      # seconds between moves
 
         def build_galaxy_background():
             # A painted Milky Way (stars, nebula clouds and dust lanes) as one picture, which costs a
             # low-end phone almost nothing. With animations on it comes alive: the galaxy slowly turns
             # and breathes, stars drift along the band and twinkle, and now and then a star shoots past.
-            anim = {"stars": [], "speeds": [], "sky": None, "shooter": None}
+            anim = {"stars": [], "speeds": [], "sky": None, "shooters": []}
             sky = ft.Container(
                 content=ft.Image(src="galaxy.jpg", fit=ft.BoxFit.COVER),
                 left=0, top=0, right=0, bottom=0,
@@ -1349,51 +1350,60 @@ async def build_ui(page: ft.Page):
             galaxy_current["anim"] = anim
             if motion["on"]:
                 for _ in range(40):
-                    dot_size = random.choice([2, 2, 2, 3, 3, 4])
+                    dot_size = random.choice([3, 3, 4, 4, 5, 6, 7])
+                    colour = random.choice(["white", "white", "#CFE3FF", "#FFE4C4", "#FFC8E8"])
                     star = ft.Container(
                         width=dot_size, height=dot_size,
                         border_radius=dot_size,
-                        bgcolor=random.choice(["white", "white", "#CFE3FF", "#FFE4C4", "#FFC8E8"]),
+                        bgcolor=colour,
+                        # the bigger stars get a soft glow so they read as stars, not dots
+                        shadow=ft.BoxShadow(blur_radius=dot_size * 2, spread_radius=1,
+                                            color=ft.Colors.with_opacity(0.7, colour)) if dot_size >= 5 else None,
                         left=random.uniform(0, GALAXY_W),
                         top=random.uniform(0, GALAXY_H),
-                        opacity=random.uniform(0.35, 1.0),
-                        animate_opacity=ft.Animation(random.randint(1200, 2400), ft.AnimationCurve.EASE_IN_OUT),
-                        animate_position=ft.Animation(3000, ft.AnimationCurve.LINEAR),
+                        opacity=random.uniform(0.5, 1.0),
+                        animate_opacity=ft.Animation(random.randint(900, 1800), ft.AnimationCurve.EASE_IN_OUT),
+                        animate_position=ft.Animation(int(GALAXY_TICK * 1000), ft.AnimationCurve.LINEAR),
                     )
                     anim["stars"].append(star)
-                    anim["speeds"].append(random.uniform(0.5, 1.6))  # nearer stars move faster
-                shooter = ft.Container(
-                    width=120, height=2, border_radius=2, rotate=-0.5, opacity=0,
-                    left=GALAXY_W, top=60,
-                    gradient=ft.LinearGradient(begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0),
-                                               colors=["#FFFFFF", ft.Colors.with_opacity(0.0, "#CFE3FF")]),
-                    animate_position=ft.Animation(900, ft.AnimationCurve.EASE_IN),
-                    animate_opacity=ft.Animation(250, ft.AnimationCurve.EASE_OUT),
-                )
-                anim["shooter"] = shooter
-                layers += anim["stars"] + [shooter]
+                    anim["speeds"].append(random.uniform(0.6, 1.7))  # nearer stars move faster
+                for _ in range(3):  # up to three shooting stars can cross at once
+                    shooter = ft.Container(
+                        width=190, height=3, border_radius=3, rotate=-0.5, opacity=0,
+                        left=GALAXY_W, top=60,
+                        gradient=ft.LinearGradient(begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0),
+                                                   colors=["#FFFFFF", "#CFE3FF", ft.Colors.with_opacity(0.0, "#9FB8FF")]),
+                        shadow=ft.BoxShadow(blur_radius=8, spread_radius=1,
+                                            color=ft.Colors.with_opacity(0.6, "#CFE3FF")),
+                        animate_position=ft.Animation(750, ft.AnimationCurve.EASE_IN),
+                        animate_opacity=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
+                    )
+                    anim["shooters"].append(shooter)
+                layers += anim["stars"] + anim["shooters"]
             return anim, ft.Stack(controls=layers, expand=True)
 
-        async def shooting_star(shooter):
+        async def shooting_star(shooter, delay=0.0):
             # Jump (invisibly) to a start point in the upper half, then streak down-left and fade.
+            if delay:
+                await asyncio.sleep(delay)
             shooter.opacity = 0
             shooter.left = random.uniform(GALAXY_W * 0.45, GALAXY_W)
             shooter.top = random.uniform(20, GALAXY_H * 0.45)
             _refresh(background_layer)
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.8)
             if not galaxy_stars_active["value"]:
                 return
             shooter.opacity = 1
-            shooter.left -= 300
-            shooter.top += 165
+            shooter.left -= 380
+            shooter.top += 210
             _refresh(background_layer)
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.55)
             shooter.opacity = 0
             _refresh(background_layer)
 
         async def twinkle_galaxy(anim):
-            stars, speeds, sky, shooter = anim["stars"], anim["speeds"], anim["sky"], anim["shooter"]
-            tick, next_turn, next_shot = 0, 0, random.randint(3, 6)
+            stars, speeds, sky, shooters = anim["stars"], anim["speeds"], anim["sky"], anim["shooters"]
+            tick, next_turn, next_shot = 0, 0, 1
             try:
                 while galaxy_stars_active["value"] and build_gen["n"] == my_gen and galaxy_current["anim"] is anim:
                     if not app_active["value"] or not motion["on"] or not stars:
@@ -1423,13 +1433,16 @@ async def build_ui(page: ft.Page):
                     if tick >= next_turn:              # the whole galaxy slowly turns and breathes
                         sky.scale = 1.1 if sky.scale > 1.12 else 1.16
                         sky.rotate = -0.035 if (sky.rotate or 0) >= 0 else 0.035
-                        next_turn = tick + 9           # 9 ticks x 3 s ~ the 26 s animation
+                        next_turn = tick + 13          # 13 ticks x 2 s ~ the 26 s animation
                     _refresh(background_layer)
-                    if shooter is not None and tick >= next_shot:
-                        asyncio.create_task(shooting_star(shooter))
-                        next_shot = tick + random.randint(3, 6)
+                    if shooters and tick >= next_shot:
+                        # One, two or sometimes three shooting stars, a moment apart.
+                        count = random.choice([1, 1, 2, 2, 3])
+                        for i, sh in enumerate(shooters[:count]):
+                            asyncio.create_task(shooting_star(sh, delay=i * random.uniform(0.25, 0.7)))
+                        next_shot = tick + random.randint(2, 4)   # every 4-8 seconds
                     tick += 1
-                    await asyncio.sleep(3.0)
+                    await asyncio.sleep(GALAXY_TICK)
             except Exception:
                 pass
 
