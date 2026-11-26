@@ -233,6 +233,22 @@ def _android_activity():
     return autoclass(host).mActivity
 
 
+def current_package_name():
+    """The installed app's package: the Play version, or the side-by-side personal build
+    (com.linton.naira_finance_hub.personal). Falls back to the Play package off-device."""
+    try:
+        activity = _android_activity()
+        if activity is not None:
+            return str(activity.getPackageName())
+    except Exception:
+        pass
+    return NOTIF_PACKAGE_NAME
+
+
+def is_personal_build():
+    return current_package_name().endswith(".personal")
+
+
 def request_notify_permission():
     """Ask once for permission to show notifications (Android 13 and newer)."""
     try:
@@ -2095,7 +2111,7 @@ async def build_ui(page: ft.Page):
             await prefs.set(profile_key("money_transactions"), json.dumps(transactions))
 
         # -------------------- AUTOMATED CAPTURE (banking SMS/app notifications, personal build only) --------------------
-        NOTIF_DATA_DIR = f"/storage/emulated/0/Android/data/{NOTIF_PACKAGE_NAME}/files"
+        NOTIF_DATA_DIR = f"/storage/emulated/0/Android/data/{current_package_name()}/files"
         NOTIF_INBOX_FILE = f"{NOTIF_DATA_DIR}/notification_inbox.jsonl"
         NOTIF_SEEN_PACKAGES_FILE = f"{NOTIF_DATA_DIR}/seen_packages.json"
         NOTIF_ALLOWLIST_FILE = f"{NOTIF_DATA_DIR}/allowed_packages.txt"
@@ -6991,9 +7007,9 @@ async def build_ui(page: ft.Page):
                 pass
             try:
                 now_dt = datetime.datetime.now()
-                for t in await load_todos():
+                for t in reminder_todos(await load_todos()):
                     due = todo_due(t)
-                    if t.get("done") or due is None:
+                    if due is None:
                         continue
                     days = (due.date() - today_d).days
                     if days > 1:
@@ -7089,6 +7105,14 @@ async def build_ui(page: ft.Page):
                 return max(float(t.get("amount", 0) or 0), 0.0)
             except (TypeError, ValueError):
                 return 0.0
+
+        def reminder_todos(items):
+            """Items that can still remind: not done, not brought over into a newer month, and not an
+            older copy of something already on this month's list."""
+            this_key = month_key()
+            current = {t.get("text", "").strip().lower() for t in items if t.get("month") == this_key}
+            return [t for t in items if not t.get("done") and not t.get("carried")
+                    and (t.get("month") == this_key or t.get("text", "").strip().lower() not in current)]
 
         def todo_due(t):
             """The reminder date/time of a to-do item, or None."""
@@ -7266,9 +7290,9 @@ async def build_ui(page: ft.Page):
                 items = await load_todos()
                 now = datetime.datetime.now()
                 changed = False
-                for t in items:
+                for t in reminder_todos(items):
                     due = todo_due(t)
-                    if t.get("done") or t.get("notified") or due is None or due > now:
+                    if t.get("notified") or due is None or due > now:
                         continue
                     amt = todo_amount(t)
                     body = t.get("text", "") + (f" ({fmt_money(amt, 0)})" if amt else "")
@@ -7314,6 +7338,7 @@ async def build_ui(page: ft.Page):
                 if room <= 0:
                     break
                 sig = (t.get("text", "").strip().lower(), todo_amount(t))
+                t["carried"] = True  # the copy in this month takes over its reminders
                 if sig in have:
                     continue
                 items.append({"id": new_ajo_id(), "text": t.get("text", ""), "amount": todo_amount(t), "done": False,
@@ -7538,17 +7563,17 @@ async def build_ui(page: ft.Page):
                                             check_color="white",
                                             border_side=ft.BorderSide(2, "#4FC3F7")),
                                 ft.Column(
-                                    [ft.Text(t.get("text", ""), size=13, max_lines=2,
+                                    [ft.Text(t.get("text", ""), size=15, max_lines=2,
                                              overflow=ft.TextOverflow.ELLIPSIS,
-                                             color=SOFT_TEXT if is_done else "white",
-                                             weight=None if is_done else ft.FontWeight.BOLD,
+                                             color=SOFT_TEXT if is_done else "#80D8FF",
+                                             weight=ft.FontWeight.W_500 if is_done else ft.FontWeight.W_800,
                                              style=ft.TextStyle(decoration=ft.TextDecoration.LINE_THROUGH) if is_done else None)]
                                     + ([ft.Row([ft.Icon(ft.Icons.ALARM_ROUNDED, size=13, color=due_color),
                                                 ft.Text(due_label, size=11, color=due_color)], spacing=3, tight=True)]
                                        if due_label else []),
                                     spacing=1, tight=True, expand=True,
                                 ),
-                                ft.Text(money(amt, 0) if amt else "", size=12, weight=ft.FontWeight.BOLD,
+                                ft.Text(money(amt, 0) if amt else "", size=14, weight=ft.FontWeight.W_800,
                                         color=SOFT_TEXT if is_done else "#FFD54F"),
                             ],
                             spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -7558,10 +7583,23 @@ async def build_ui(page: ft.Page):
                         on_click=lambda e, it=t: open_todo_dialog(it), ink=True,
                     ))
                 if planned > 0:
-                    todo_rows.append(ft.Text(
-                        f"Planned {money(planned, 0)} · still to go {money(still, 0)}"
-                        if still > 0 else f"Planned {money(planned, 0)} · all paid",
-                        color=SOFT_TEXT, size=12))
+                    # The totals, in bold green so they stand out.
+                    todo_rows.append(ft.Container(
+                        content=ft.Column(
+                            [
+                                ft.Row([ft.Text("Total planned", color="white", size=14, weight=ft.FontWeight.BOLD, expand=True),
+                                        ft.Text(money(planned, 0), color=MONEY_GREEN, size=17, weight=ft.FontWeight.W_900)]),
+                                ft.Row([ft.Text("Still to go" if still > 0 else "All paid", color=SOFT_TEXT, size=13,
+                                                weight=ft.FontWeight.BOLD, expand=True),
+                                        ft.Text(money(still, 0) if still > 0 else "✓", color=MONEY_GREEN, size=15,
+                                                weight=ft.FontWeight.W_800)]),
+                            ],
+                            spacing=4, tight=True,
+                        ),
+                        padding=ft.Padding(left=12, right=12, top=10, bottom=10), border_radius=12,
+                        bgcolor=ft.Colors.with_opacity(0.12, MONEY_GREEN),
+                        border=ft.Border.all(1, ft.Colors.with_opacity(0.45, MONEY_GREEN)),
+                    ))
                 todo_rows.append(ft.Text("Tick a box when it's done. Tap an item to edit it or set a reminder.",
                                          color=SOFT_TEXT, size=11, italic=True))
             cards.append(home_card(todo_rows, border_color="#4FC3F7"))
@@ -8410,7 +8448,10 @@ async def build_ui(page: ft.Page):
                     page.update()
 
                 banner_ad_slot.content = fta.BannerAd(
-                    unit_id=BANNER_AD_UNIT_ID.get(page.platform, BANNER_AD_UNIT_ID[ft.PagePlatform.ANDROID]),
+                    # The personal build shows Google's test ads, so your own phone never counts
+                    # as views on your real AdMob account.
+                    unit_id=("ca-app-pub-3940256099942544/6300978111" if is_personal_build()
+                             else BANNER_AD_UNIT_ID.get(page.platform, BANNER_AD_UNIT_ID[ft.PagePlatform.ANDROID])),
                     width=320,
                     height=50,
                     on_load=on_ad_load,

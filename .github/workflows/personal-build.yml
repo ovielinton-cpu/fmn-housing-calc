@@ -18,11 +18,15 @@ jobs:
       - name: Install Flet and dependencies
         run: pip install flet==0.83.0 flet-ads flet-audio fpdf2
 
+      # Own package name, so it installs next to the Google Play version and Play never
+      # tries to "update" it. It shows Google's test ads (see is_personal_build in main.py).
       - name: Build app with notification-capture template
         run: >
           flet build apk --yes
           --template https://github.com/ovielinton-cpu/flet-android-template
           --template-ref main
+          --bundle-id com.linton.naira_finance_hub.personal
+          --product "Naira Hub (Personal)"
 
       - name: Upload the APK
         uses: actions/upload-artifact@v4
